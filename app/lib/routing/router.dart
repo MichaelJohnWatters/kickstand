@@ -1,0 +1,187 @@
+// go_router with auth-gate + role-aware redirect.
+//
+// Splash → /welcome (unauth) → /student or /instructor (auth, by role).
+// ShellRoutes give each role its own bottom tab bar; routes outside the
+// shell (booking review, notifications, session detail) are full-screen.
+
+import 'package:flutter/widgets.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
+import '../screens/admin_course_types_screen.dart';
+import '../screens/admin_disruptions_screen.dart';
+import '../screens/admin_fleet_screen.dart';
+import '../screens/admin_instructor_pay_screen.dart';
+import '../screens/admin_instructors_screen.dart';
+import '../screens/admin_locations_screen.dart';
+import '../screens/admin_logistics_screen.dart';
+import '../screens/admin_master_calendar_screen.dart';
+import '../screens/admin_overview_screen.dart';
+import '../screens/admin_reimbursements_screen.dart';
+import '../screens/admin_shell.dart';
+import '../screens/admin_signups_screen.dart';
+import '../screens/admin_student_detail_screen.dart';
+import '../screens/admin_students_screen.dart';
+import '../screens/booking_confirmation_screen.dart';
+import '../screens/browse_sessions_screen.dart';
+import '../screens/instructor_assess_screen.dart';
+import '../screens/instructor_availability_screen.dart';
+import '../screens/instructor_expenses_screen.dart';
+import '../screens/instructor_profile_screen.dart';
+import '../screens/instructor_schedule_screen.dart';
+import '../screens/instructor_session_detail_screen.dart';
+import '../screens/instructor_shell.dart';
+import '../screens/licence_screen.dart';
+import '../screens/login_screen.dart';
+import '../screens/my_bookings_screen.dart';
+import '../screens/notifications_screen.dart';
+import '../screens/progress_screen.dart';
+import '../screens/splash_screen.dart';
+import '../screens/student_home_screen.dart';
+import '../screens/student_shell.dart';
+import '../screens/welcome_screen.dart';
+import '../state/auth.dart';
+import '../state/providers.dart';
+
+String _homeForRole(String role) {
+  switch (role) {
+    case 'instructor':
+      return '/instructor';
+    case 'admin':
+    case 'owner':
+      return '/admin';
+    default:
+      return '/student';
+  }
+}
+
+bool _isStaff(String role) => role == 'admin' || role == 'owner';
+bool _isStudent(String role) => role == 'student';
+bool _isInstructor(String role) => role == 'instructor';
+
+GoRouter buildRouter(Ref ref) {
+  final refresh = _RiverpodAuthRefresh(ref);
+
+  return GoRouter(
+    initialLocation: '/splash',
+    refreshListenable: refresh,
+    redirect: (ctx, state) {
+      final auth = ref.read(authControllerProvider);
+      if (auth.loading) {
+        return state.matchedLocation == '/splash' ? null : '/splash';
+      }
+      final isAuthPath = state.matchedLocation == '/welcome' ||
+          state.matchedLocation == '/login' ||
+          state.matchedLocation == '/splash';
+      if (!auth.isSignedIn) {
+        return isAuthPath && state.matchedLocation != '/splash' ? null : '/welcome';
+      }
+      final home = _homeForRole(auth.identity!.role);
+      if (isAuthPath) return home;
+
+      // Bounce a user trying to hit another role's section to their own home.
+      final role = auth.identity!.role;
+      final onStudent = state.matchedLocation.startsWith('/student');
+      final onInstructor = state.matchedLocation.startsWith('/instructor');
+      final onAdmin = state.matchedLocation.startsWith('/admin');
+      if (_isStudent(role) && !onStudent && (onInstructor || onAdmin)) return home;
+      if (_isInstructor(role) && !onInstructor && (onStudent || onAdmin)) return home;
+      if (_isStaff(role) && !onAdmin && (onStudent || onInstructor)) return home;
+      return null;
+    },
+    routes: [
+      GoRoute(path: '/splash', builder: (_, __) => const SplashScreen()),
+      GoRoute(path: '/welcome', builder: (_, __) => const WelcomeScreen()),
+      GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
+
+      // Shared between roles.
+      GoRoute(path: '/notifications', builder: (_, __) => const NotificationsScreen()),
+
+      // Student shell. Tab switches use NoTransitionPage so the navigation
+      // feels instant on web — Material's default fade-in transition is the
+      // bulk of the perceived "tab lag" otherwise.
+      ShellRoute(
+        builder: (ctx, state, child) => StudentShell(child: child),
+        routes: [
+          GoRoute(path: '/student', pageBuilder: (_, __) => _instant(const StudentHomeScreen())),
+          GoRoute(path: '/student/browse', pageBuilder: (_, __) => _instant(const BrowseSessionsScreen())),
+          GoRoute(path: '/student/bookings', pageBuilder: (_, __) => _instant(const MyBookingsScreen())),
+          GoRoute(path: '/student/progress', pageBuilder: (_, __) => _instant(const ProgressScreen())),
+          GoRoute(path: '/student/licence', pageBuilder: (_, __) => _instant(const LicenceScreen())),
+        ],
+      ),
+      // Confirmation lands outside the shell so the success view is
+      // full-bleed (no tab bar). The 4-step booking flow itself lives in
+      // BrowseSessionsScreen — there's no per-session route any more.
+      GoRoute(
+        path: '/student/confirmed/:bookingId',
+        builder: (ctx, st) => BookingConfirmationScreen(bookingId: st.pathParameters['bookingId']!),
+      ),
+
+      // Instructor shell. Same NoTransitionPage treatment as the other tab bars.
+      ShellRoute(
+        builder: (ctx, state, child) => InstructorShell(child: child),
+        routes: [
+          GoRoute(path: '/instructor', pageBuilder: (_, __) => _instant(const InstructorScheduleScreen())),
+          GoRoute(path: '/instructor/availability', pageBuilder: (_, __) => _instant(const InstructorAvailabilityScreen())),
+          GoRoute(path: '/instructor/expenses', pageBuilder: (_, __) => _instant(const InstructorExpensesScreen())),
+          GoRoute(path: '/instructor/profile', pageBuilder: (_, __) => _instant(const InstructorProfileScreen())),
+        ],
+      ),
+      GoRoute(
+        path: '/instructor/session/:sessionId',
+        builder: (ctx, st) => InstructorSessionDetailScreen(sessionId: st.pathParameters['sessionId']!),
+      ),
+      GoRoute(
+        path: '/instructor/session/:sessionId/assess/:bookingId',
+        builder: (ctx, st) => InstructorAssessScreen(
+          sessionId: st.pathParameters['sessionId']!,
+          bookingId: st.pathParameters['bookingId']!,
+        ),
+      ),
+
+      // Admin shell (web-first). Sidebar nav clicks should feel instant —
+      // see _instant() helper below.
+      ShellRoute(
+        builder: (ctx, state, child) => AdminShell(child: child),
+        routes: [
+          GoRoute(path: '/admin', pageBuilder: (_, __) => _instant(const AdminOverviewScreen())),
+          GoRoute(path: '/admin/signups', pageBuilder: (_, __) => _instant(const AdminSignupsScreen())),
+          GoRoute(path: '/admin/students', pageBuilder: (_, __) => _instant(const AdminStudentsScreen())),
+          GoRoute(
+            path: '/admin/students/:id',
+            pageBuilder: (ctx, st) => _instant(AdminStudentDetailScreen(studentId: st.pathParameters['id']!)),
+          ),
+          GoRoute(path: '/admin/fleet', pageBuilder: (_, __) => _instant(const AdminFleetScreen())),
+          GoRoute(path: '/admin/disruptions', pageBuilder: (_, __) => _instant(const AdminDisruptionsScreen())),
+          GoRoute(path: '/admin/logistics', pageBuilder: (_, __) => _instant(const AdminLogisticsScreen())),
+          GoRoute(path: '/admin/instructors', pageBuilder: (_, __) => _instant(const AdminInstructorsScreen())),
+          GoRoute(path: '/admin/instructor-pay', pageBuilder: (_, __) => _instant(const AdminInstructorPayScreen())),
+          GoRoute(path: '/admin/reimbursements', pageBuilder: (_, __) => _instant(const AdminReimbursementsScreen())),
+          GoRoute(path: '/admin/locations', pageBuilder: (_, __) => _instant(const AdminLocationsScreen())),
+          GoRoute(path: '/admin/courses', pageBuilder: (_, __) => _instant(const AdminCourseTypesScreen())),
+          GoRoute(path: '/admin/calendar', pageBuilder: (_, __) => _instant(const AdminMasterCalendarScreen())),
+        ],
+      ),
+    ],
+  );
+}
+
+/// Page wrapper that skips the default Material fade transition — tab
+/// switches inside a shell should feel like a router state change, not a
+/// page push. Used across all three role shells.
+NoTransitionPage<void> _instant(Widget child) =>
+    NoTransitionPage<void>(child: child);
+
+/// Bridges Riverpod's authState into GoRouter's refreshListenable.
+class _RiverpodAuthRefresh extends ChangeNotifier {
+  late final ProviderSubscription<AuthState> _sub;
+  _RiverpodAuthRefresh(Ref ref) {
+    _sub = ref.listen<AuthState>(authControllerProvider, (_, __) => notifyListeners());
+  }
+  @override
+  void dispose() {
+    _sub.close();
+    super.dispose();
+  }
+}

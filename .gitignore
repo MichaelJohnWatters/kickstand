@@ -1,0 +1,18 @@
+/bin/
+# Stray Go-built binary that ends up at the repo root if someone runs
+# `go build ./cmd/seed` without an output path.
+/seed
+/server
+# Local filestore for receipt photos (instructor expenses). Persisted in
+# dev only; production points at object storage (GCS / R2 / S3).
+/uploads/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.test
+*.out
+.env
+.env.*
+!.env.example
+.DS_Store
