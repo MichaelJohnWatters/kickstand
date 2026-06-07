@@ -1,0 +1,495 @@
+// Package expenses implements instructor-submitted reimbursable expenses
+// (petrol, lunch, parking, tolls, …) with an approval-first workflow.
+//
+// State machine:
+//
+//	pending  ──Approve──▶  approved   ──MarkReimbursed──▶  reimbursed
+//	   │                       │
+//	   │                       └──Reject──▶  rejected (terminal)
+//	   ├──Reject──▶            rejected
+//	   └──Withdraw──▶          withdrawn (instructor backs out while pending)
+//
+// Receipt photos don't live in this package — the caller stages the bytes
+// via the `filestore` interface and passes back a storage_key. Engine just
+// records it.
+//
+// Per-school category list (`expense_categories`) is curated by the owner.
+// `category_id` on an expense is denormalised: removing a category from the
+// list does NOT cascade through existing rows. They keep their original tag.
+package expenses
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/michaeljohnwatters/kickstand/internal/domain"
+	"github.com/michaeljohnwatters/kickstand/internal/tenant"
+)
+
+// --- Domain types ---
+
+type Category struct {
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	Icon      string `json:"icon"`
+	Tone      int    `json:"tone"`
+	Active    bool   `json:"active"`
+	SortOrder int    `json:"sortOrder"`
+}
+
+type Expense struct {
+	ID                 domain.ExpenseID
+	InstructorID       domain.UserID
+	InstructorName     string
+	CategoryID         string
+	CategoryLabel      string
+	CategoryIcon       string
+	CategoryTone       int
+	AmountPence        int
+	OccurredAt         time.Time
+	Where              string
+	Notes              string
+	Status             string // pending|approved|rejected|reimbursed|withdrawn
+	ReceiptStorageKey  string
+	ReceiptContentType string
+	ReceiptSizeBytes   int
+	SubmittedAt        time.Time
+	ReviewedBy         domain.UserID
+	ReviewedByName     string
+	ReviewedAt         time.Time
+	ReviewerNote       string
+	PaidAt             time.Time
+	PaidMethod         string
+	PaidBy             domain.UserID
+	PaidByName         string
+	WithdrawnAt        time.Time
+}
+
+// --- Errors ---
+
+var (
+	ErrNotFound          = errors.New("expenses: not found")
+	ErrUnknownCategory   = errors.New("expenses: category does not exist for this school")
+	ErrInvalidStatus     = errors.New("expenses: action not valid for the current status")
+	ErrAmountRequired    = errors.New("expenses: amount_pence must be > 0")
+	ErrReceiptRequired   = errors.New("expenses: a receipt is required")
+	ErrReviewerNoteEmpty = errors.New("expenses: rejection requires a reason")
+	ErrNotMyExpense      = errors.New("expenses: this expense is not owned by the caller")
+)
+
+// --- Requests ---
+
+type SubmitRequest struct {
+	InstructorID       domain.UserID
+	CategoryID         string
+	AmountPence        int
+	OccurredAt         time.Time
+	Where              string
+	Notes              string
+	ReceiptStorageKey  string
+	ReceiptContentType string
+	ReceiptSizeBytes   int
+}
+
+type ApproveRequest struct {
+	ID           domain.ExpenseID
+	ApprovedBy   domain.UserID
+	ReviewerNote string // optional
+}
+
+type RejectRequest struct {
+	ID           domain.ExpenseID
+	RejectedBy   domain.UserID
+	ReviewerNote string // required
+}
+
+type MarkReimbursedRequest struct {
+	ID         domain.ExpenseID
+	PaidBy     domain.UserID
+	PaidMethod string // bank|cash|other
+}
+
+type WithdrawRequest struct {
+	ID           domain.ExpenseID
+	InstructorID domain.UserID
+}
+
+// --- Submission ---
+
+func Submit(ctx context.Context, scope *tenant.Scope, req SubmitRequest) (*Expense, error) {
+	return submitAt(ctx, scope, req, time.Now)
+}
+
+func submitAt(ctx context.Context, scope *tenant.Scope, req SubmitRequest, nowFn func() time.Time) (*Expense, error) {
+	if req.AmountPence <= 0 {
+		return nil, ErrAmountRequired
+	}
+	if req.ReceiptStorageKey == "" || req.ReceiptSizeBytes <= 0 {
+		return nil, ErrReceiptRequired
+	}
+
+	// Validate category exists for this school + is active.
+	var active int
+	err := scope.Conn().QueryRowContext(ctx,
+		`SELECT active FROM expense_categories WHERE school_id = ? AND id = ?`,
+		string(scope.SchoolID()), req.CategoryID).Scan(&active)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && active == 0) {
+		return nil, ErrUnknownCategory
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lookup category: %w", err)
+	}
+
+	id := domain.ExpenseID(domain.NewID())
+	now := nowFn().UTC().Format(time.RFC3339)
+
+	_, err = scope.Conn().ExecContext(ctx, `
+		INSERT INTO expenses (id, school_id, instructor_id, category_id, amount_pence,
+		    occurred_at, where_, notes, status,
+		    receipt_storage_key, receipt_content_type, receipt_size_bytes,
+		    submitted_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+	`,
+		string(id), string(scope.SchoolID()), string(req.InstructorID), req.CategoryID, req.AmountPence,
+		req.OccurredAt.UTC().Format(time.RFC3339), nullable(req.Where), nullable(req.Notes),
+		req.ReceiptStorageKey, req.ReceiptContentType, req.ReceiptSizeBytes,
+		now,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert expense: %w", err)
+	}
+	return getByID(ctx, scope, id)
+}
+
+// --- State transitions ---
+
+func Approve(ctx context.Context, scope *tenant.Scope, req ApproveRequest) (*Expense, error) {
+	return approveAt(ctx, scope, req, time.Now)
+}
+
+func approveAt(ctx context.Context, scope *tenant.Scope, req ApproveRequest, nowFn func() time.Time) (*Expense, error) {
+	res, err := scope.Conn().ExecContext(ctx, `
+		UPDATE expenses SET status = 'approved',
+		    reviewed_by = ?, reviewed_at = ?, reviewer_note = ?
+		WHERE id = ? AND school_id = ? AND status = 'pending'
+	`, string(req.ApprovedBy), nowFn().UTC().Format(time.RFC3339), nullable(req.ReviewerNote),
+		string(req.ID), string(scope.SchoolID()))
+	if err != nil {
+		return nil, fmt.Errorf("approve: %w", err)
+	}
+	return mustAffected(ctx, scope, req.ID, res)
+}
+
+func Reject(ctx context.Context, scope *tenant.Scope, req RejectRequest) (*Expense, error) {
+	return rejectAt(ctx, scope, req, time.Now)
+}
+
+func rejectAt(ctx context.Context, scope *tenant.Scope, req RejectRequest, nowFn func() time.Time) (*Expense, error) {
+	if req.ReviewerNote == "" {
+		return nil, ErrReviewerNoteEmpty
+	}
+	res, err := scope.Conn().ExecContext(ctx, `
+		UPDATE expenses SET status = 'rejected',
+		    reviewed_by = ?, reviewed_at = ?, reviewer_note = ?
+		WHERE id = ? AND school_id = ? AND status = 'pending'
+	`, string(req.RejectedBy), nowFn().UTC().Format(time.RFC3339), req.ReviewerNote,
+		string(req.ID), string(scope.SchoolID()))
+	if err != nil {
+		return nil, fmt.Errorf("reject: %w", err)
+	}
+	return mustAffected(ctx, scope, req.ID, res)
+}
+
+func MarkReimbursed(ctx context.Context, scope *tenant.Scope, req MarkReimbursedRequest) (*Expense, error) {
+	return markReimbursedAt(ctx, scope, req, time.Now)
+}
+
+func markReimbursedAt(ctx context.Context, scope *tenant.Scope, req MarkReimbursedRequest, nowFn func() time.Time) (*Expense, error) {
+	method := req.PaidMethod
+	if method == "" {
+		method = "bank"
+	}
+	res, err := scope.Conn().ExecContext(ctx, `
+		UPDATE expenses SET status = 'reimbursed',
+		    paid_by = ?, paid_at = ?, paid_method = ?
+		WHERE id = ? AND school_id = ? AND status = 'approved'
+	`, string(req.PaidBy), nowFn().UTC().Format(time.RFC3339), method,
+		string(req.ID), string(scope.SchoolID()))
+	if err != nil {
+		return nil, fmt.Errorf("reimburse: %w", err)
+	}
+	return mustAffected(ctx, scope, req.ID, res)
+}
+
+// Withdraw — the instructor backs out a pending expense before review.
+// The receipt file is left in the store; admin can audit if needed.
+func Withdraw(ctx context.Context, scope *tenant.Scope, req WithdrawRequest) (*Expense, error) {
+	return withdrawAt(ctx, scope, req, time.Now)
+}
+
+func withdrawAt(ctx context.Context, scope *tenant.Scope, req WithdrawRequest, nowFn func() time.Time) (*Expense, error) {
+	res, err := scope.Conn().ExecContext(ctx, `
+		UPDATE expenses SET status = 'withdrawn', withdrawn_at = ?
+		WHERE id = ? AND school_id = ? AND instructor_id = ? AND status = 'pending'
+	`, nowFn().UTC().Format(time.RFC3339),
+		string(req.ID), string(scope.SchoolID()), string(req.InstructorID))
+	if err != nil {
+		return nil, fmt.Errorf("withdraw: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		// Differentiate "not yours" from "wrong status" by re-fetching.
+		ex, err := getByID(ctx, scope, req.ID)
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrNotFound
+		}
+		if err != nil {
+			return nil, err
+		}
+		if ex.InstructorID != req.InstructorID {
+			return nil, ErrNotMyExpense
+		}
+		return nil, ErrInvalidStatus
+	}
+	return getByID(ctx, scope, req.ID)
+}
+
+// --- Queries ---
+
+// ListForInstructor returns this instructor's expenses across all states,
+// most recent first. Status filter is optional (empty = all).
+func ListForInstructor(ctx context.Context, scope *tenant.Scope, instructorID domain.UserID, status string) ([]Expense, error) {
+	return list(ctx, scope, listOpts{instructorID: instructorID, status: status})
+}
+
+// ListForReview returns every school expense (optionally filtered to a
+// status) for the admin queue.
+func ListForReview(ctx context.Context, scope *tenant.Scope, status string) ([]Expense, error) {
+	return list(ctx, scope, listOpts{status: status})
+}
+
+// Get returns one row by id. Used by the admin detail modal and the
+// receipt-serve endpoint.
+func Get(ctx context.Context, scope *tenant.Scope, id domain.ExpenseID) (*Expense, error) {
+	return getByID(ctx, scope, id)
+}
+
+// CountPending — for sidebar badge / KPI.
+func CountPending(ctx context.Context, scope *tenant.Scope) (int, error) {
+	var n int
+	err := scope.Conn().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM expenses WHERE school_id = ? AND status = 'pending'`,
+		string(scope.SchoolID())).Scan(&n)
+	return n, err
+}
+
+// CountOutstandingForInstructor — hero "Awaiting reimbursement" total.
+// Counts pending + approved, sums their amount_pence.
+type OutstandingTotals struct {
+	Count        int
+	AmountPence  int
+}
+
+func OutstandingForInstructor(ctx context.Context, scope *tenant.Scope, instructorID domain.UserID) (OutstandingTotals, error) {
+	var t OutstandingTotals
+	err := scope.Conn().QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(amount_pence), 0)
+		FROM expenses WHERE school_id = ? AND instructor_id = ?
+		  AND status IN ('pending', 'approved')
+	`, string(scope.SchoolID()), string(instructorID)).Scan(&t.Count, &t.AmountPence)
+	return t, err
+}
+
+// --- Categories ---
+
+func ListCategories(ctx context.Context, scope *tenant.Scope, activeOnly bool) ([]Category, error) {
+	q := `SELECT id, label, icon, tone, active, sort_order
+	      FROM expense_categories WHERE school_id = ?`
+	if activeOnly {
+		q += ` AND active = 1`
+	}
+	q += ` ORDER BY sort_order, label`
+	rows, err := scope.Conn().QueryContext(ctx, q, string(scope.SchoolID()))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Category{}
+	for rows.Next() {
+		var c Category
+		var act int
+		if err := rows.Scan(&c.ID, &c.Label, &c.Icon, &c.Tone, &act, &c.SortOrder); err != nil {
+			return nil, err
+		}
+		c.Active = act == 1
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// UpsertCategories replaces the school's category list with `cats` in a
+// single transaction. Categories present in the DB but missing here are
+// soft-removed (active=0) rather than DELETEd, so existing expenses tagged
+// with that category id keep displaying its label/icon when joined.
+func UpsertCategories(ctx context.Context, scope *tenant.Scope, cats []Category) error {
+	return upsertAt(ctx, scope, cats, time.Now)
+}
+
+func upsertAt(ctx context.Context, scope *tenant.Scope, cats []Category, nowFn func() time.Time) error {
+	now := nowFn().UTC().Format(time.RFC3339)
+	return scope.WithTx(ctx, func(tx *tenant.Scope) error {
+		// Soft-delete everything first; re-activate or insert what we're keeping.
+		if _, err := tx.Conn().ExecContext(ctx,
+			`UPDATE expense_categories SET active = 0 WHERE school_id = ?`,
+			string(tx.SchoolID())); err != nil {
+			return err
+		}
+		for i, c := range cats {
+			_, err := tx.Conn().ExecContext(ctx, `
+				INSERT INTO expense_categories (school_id, id, label, icon, tone, active, sort_order, created_at)
+				VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+				ON CONFLICT (school_id, id) DO UPDATE SET
+				    label = excluded.label,
+				    icon = excluded.icon,
+				    tone = excluded.tone,
+				    active = 1,
+				    sort_order = excluded.sort_order
+			`, string(tx.SchoolID()), c.ID, c.Label, c.Icon, c.Tone, i, now)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// --- Internal helpers ---
+
+type listOpts struct {
+	instructorID domain.UserID
+	status       string
+}
+
+func list(ctx context.Context, scope *tenant.Scope, opt listOpts) ([]Expense, error) {
+	q := `
+		SELECT e.id, e.instructor_id, COALESCE(u.name, ''), e.category_id,
+		       COALESCE(c.label, e.category_id), COALESCE(c.icon, 'more-h'), COALESCE(c.tone, 277),
+		       e.amount_pence, e.occurred_at, COALESCE(e.where_, ''), COALESCE(e.notes, ''),
+		       e.status, e.receipt_storage_key, e.receipt_content_type, e.receipt_size_bytes,
+		       e.submitted_at,
+		       COALESCE(e.reviewed_by, ''), COALESCE(rb.name, ''), COALESCE(e.reviewed_at, ''), COALESCE(e.reviewer_note, ''),
+		       COALESCE(e.paid_at, ''), COALESCE(e.paid_method, ''), COALESCE(e.paid_by, ''), COALESCE(pb.name, ''),
+		       COALESCE(e.withdrawn_at, '')
+		FROM expenses e
+		LEFT JOIN users u  ON u.id = e.instructor_id AND u.school_id = e.school_id
+		LEFT JOIN expense_categories c ON c.school_id = e.school_id AND c.id = e.category_id
+		LEFT JOIN users rb ON rb.id = e.reviewed_by  AND rb.school_id = e.school_id
+		LEFT JOIN users pb ON pb.id = e.paid_by      AND pb.school_id = e.school_id
+		WHERE e.school_id = ?
+	`
+	args := []any{string(scope.SchoolID())}
+	if opt.instructorID != "" {
+		q += ` AND e.instructor_id = ?`
+		args = append(args, string(opt.instructorID))
+	}
+	if opt.status != "" {
+		q += ` AND e.status = ?`
+		args = append(args, opt.status)
+	}
+	q += ` ORDER BY e.submitted_at DESC`
+
+	rows, err := scope.Conn().QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Expense{}
+	for rows.Next() {
+		e, err := scanExpense(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *e)
+	}
+	return out, rows.Err()
+}
+
+func getByID(ctx context.Context, scope *tenant.Scope, id domain.ExpenseID) (*Expense, error) {
+	xs, err := list(ctx, scope, listOpts{})
+	if err != nil {
+		return nil, err
+	}
+	for i := range xs {
+		if xs[i].ID == id {
+			return &xs[i], nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func mustAffected(ctx context.Context, scope *tenant.Scope, id domain.ExpenseID, res sql.Result) (*Expense, error) {
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		ex, err := getByID(ctx, scope, id)
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrNotFound
+		}
+		if err != nil {
+			return nil, err
+		}
+		_ = ex
+		return nil, ErrInvalidStatus
+	}
+	return getByID(ctx, scope, id)
+}
+
+func scanExpense(rows *sql.Rows) (*Expense, error) {
+	var e Expense
+	var (
+		occurredStr, submittedStr, reviewedStr, paidStr, withdrawnStr string
+		reviewedBy, paidBy                                            string
+	)
+	if err := rows.Scan(
+		&e.ID, &e.InstructorID, &e.InstructorName, &e.CategoryID,
+		&e.CategoryLabel, &e.CategoryIcon, &e.CategoryTone,
+		&e.AmountPence, &occurredStr, &e.Where, &e.Notes,
+		&e.Status, &e.ReceiptStorageKey, &e.ReceiptContentType, &e.ReceiptSizeBytes,
+		&submittedStr,
+		&reviewedBy, &e.ReviewedByName, &reviewedStr, &e.ReviewerNote,
+		&paidStr, &e.PaidMethod, &paidBy, &e.PaidByName,
+		&withdrawnStr,
+	); err != nil {
+		return nil, err
+	}
+	e.ReviewedBy = domain.UserID(reviewedBy)
+	e.PaidBy = domain.UserID(paidBy)
+	e.OccurredAt, _ = parseTime(occurredStr)
+	e.SubmittedAt, _ = parseTime(submittedStr)
+	if reviewedStr != "" {
+		e.ReviewedAt, _ = parseTime(reviewedStr)
+	}
+	if paidStr != "" {
+		e.PaidAt, _ = parseTime(paidStr)
+	}
+	if withdrawnStr != "" {
+		e.WithdrawnAt, _ = parseTime(withdrawnStr)
+	}
+	return &e, nil
+}
+
+func parseTime(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse(time.RFC3339, s)
+}
+
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}

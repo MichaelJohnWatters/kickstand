@@ -1,0 +1,41 @@
+name: kickstand
+description: "Kickstand — UK motorcycle training school management. Student / Instructor / Admin (one app, role-aware)."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # State management
+  flutter_riverpod: ^2.6.0
+
+  # Routing with auth-gate redirects
+  go_router: ^14.6.0
+
+  # HTTP client
+  dio: ^5.7.0
+
+  # Token storage (Keychain on iOS, Keystore on Android, localStorage on web)
+  flutter_secure_storage: ^9.2.0
+
+  # Fonts loaded at runtime (no asset bundling for dev simplicity)
+  google_fonts: ^6.2.0
+
+  # Time formatting / parsing
+  intl: ^0.20.0
+
+  # Camera / gallery picker for expense receipts
+  image_picker: ^1.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
