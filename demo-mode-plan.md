@@ -4,7 +4,12 @@
 embedded inside a hand-written marketing page on the company website.
 No backend required to host. Always current with the real app.
 
-**Status: ready to build.**
+**Status: shipped 2026-06-12.** `make marketing-demo` produces `dist/marketing/`
+ready to rsync onto any static host. MockApiClient extends the real `ApiClient`
+and overrides the `_send` seam — parity is enforced by inheritance, no abstract
+interface needed. Seed dumped from the live backend via `scripts/dump-demo.sh`
+(31 JSON files under `app/assets/demo/`) so demo content stays in sync with the
+real data shapes. JSX prototype retired (see `design_handoff_kickstand/README.md`).
 
 ---
 

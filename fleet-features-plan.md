@@ -1,6 +1,6 @@
 # Fleet features — implementation plan
 
-**Status: ready to build.** Three sequential chunks. Each ships green and is independently revertable.
+**Status: chunks 1–3 shipped 2026-06-11.** Chunk 4 (DVLA polling) deferred pending API keys — see below. Each chunk landed green and independently.
 
 ---
 
