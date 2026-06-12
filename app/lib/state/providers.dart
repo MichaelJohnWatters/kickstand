@@ -80,6 +80,40 @@ final bikeGpsProvider = FutureProvider.autoDispose<List<BikeGPS>>((ref) async {
   return ref.read(apiClientProvider).listBikeGPS();
 });
 
+/// Analytics window state — drives all three sections on the
+/// /admin/analytics page. Single source of truth so the numbers
+/// across cards always agree.
+class AnalyticsWindow {
+  final DateTime from;
+  final DateTime to;
+  const AnalyticsWindow({required this.from, required this.to});
+
+  factory AnalyticsWindow.last30Days() {
+    final now = DateTime.now().toUtc();
+    return AnalyticsWindow(from: now.subtract(const Duration(days: 30)), to: now);
+  }
+}
+
+final analyticsWindowProvider =
+    StateProvider<AnalyticsWindow>((_) => AnalyticsWindow.last30Days());
+
+final bikeUtilisationProvider =
+    FutureProvider.autoDispose<List<BikeUtilisationRow>>((ref) async {
+  final w = ref.watch(analyticsWindowProvider);
+  return ref.read(apiClientProvider).analyticsBikeUtilisation(from: w.from, to: w.to);
+});
+
+final instructorUtilisationProvider =
+    FutureProvider.autoDispose<List<InstructorUtilisationRow>>((ref) async {
+  final w = ref.watch(analyticsWindowProvider);
+  return ref.read(apiClientProvider).analyticsInstructorUtilisation(from: w.from, to: w.to);
+});
+
+final funnelStatsProvider = FutureProvider.autoDispose<FunnelStats>((ref) async {
+  final w = ref.watch(analyticsWindowProvider);
+  return ref.read(apiClientProvider).analyticsFunnel(from: w.from, to: w.to);
+});
+
 final openDisruptionsProvider =
     FutureProvider<List<Map<String, dynamic>>>((ref) async {
   return ref.read(apiClientProvider).listDisruptions(openOnly: true);

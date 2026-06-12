@@ -130,6 +130,10 @@ void refreshAdminTab(WidgetRef ref, String routePrefix) {
     ref.invalidate(openFollowupsProvider);
   } else if (routePrefix.startsWith('/admin/gps')) {
     ref.invalidate(bikeGpsProvider);
+  } else if (routePrefix.startsWith('/admin/analytics')) {
+    ref.invalidate(bikeUtilisationProvider);
+    ref.invalidate(instructorUtilisationProvider);
+    ref.invalidate(funnelStatsProvider);
   }
   // Master calendar and Instructor pay use screen-local date/time-scoped
   // providers — they invalidate themselves on their internal pickers.

@@ -1,7 +1,11 @@
 # GPS live map + Manager analytics — implementation plan
 
-**Status: ready to build.** Two sequential chunks, each independently
-shippable. Both are new manager-only sidebar pages.
+**Status: shipped 2026-06-12.** Chunk 1 (/admin/gps) and chunk 2
+(/admin/analytics) both live. Chunk 2 deviated from the plan in one
+way: revenue is **not** duplicated under analytics — it stays on
+/admin/finance (already shipped), and the analytics page links to it
+rather than re-rendering the same numbers. This keeps a single source
+of truth for money UX.
 
 The canonical plan in `motorbike-training-plan.md` covers GPS in §7 (MVP =
 live snapshot view, history/playback deferred to phase 3) and analytics

@@ -240,6 +240,24 @@ All sidebar items live:
   profile · Onboarding mode · Booking policy · Fleet warning thresholds (the
   `{mot,tax}_{warn,urgent}_days` knobs that drive the fleet pills). Single save
   at the bottom; reuses `schoolSettingsProvider`.
+- **Analytics** (`/admin/analytics`) — operational dashboard with a shared
+  date-range chip row (7d / 30d / 90d / 1y / custom). One range governs every
+  card so the numbers always agree. Three native sections plus a link to
+  Finance for revenue (no duplication):
+  - **Bike utilisation** — per-bike booked vs an 8h/day baseline, with a
+    colour-coded progress bar (red >100%, warning 70–100%, green 30–70%,
+    grey <30%). De-duped at the (bike, session) level so a session shared
+    by N students counts as one occupancy block.
+  - **Instructor utilisation** — sessions / hours / earned / paid /
+    outstanding (all-time, matching the Instructor pay screen) with an
+    8-week sparkline per instructor.
+  - **Funnel** — four stat tiles (signup → first booking, CBT completion,
+    theory pass, practical pass) with sample counts so "100% of 1" doesn't
+    masquerade as a real number. Per-instructor pass-rate table below
+    attributes each decided external test to the student's most-recent
+    instructor in the 90 days before the test.
+  Backed by `internal/analytics` — pure-read SQL queries, no caching, no
+  materialised views (cheap at school scale; revisit if SQLite struggles).
 - **Compliance** — bike MOT/tax + instructor accreditation + insurance dashboard.
   Per-instructor accreditation list with course-coloured chips, worst-of status.
 

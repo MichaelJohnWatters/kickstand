@@ -63,6 +63,7 @@ const _navItems = <_NavItem>[
   _NavItem(label: 'Instructors', icon: Icons.group_outlined, route: '/admin/instructors'),
   _NavItem(label: 'Instructor pay', icon: Icons.payments_outlined, route: '/admin/instructor-pay'),
   _NavItem(label: 'Finance', icon: Icons.bar_chart_rounded, route: '/admin/finance'),
+  _NavItem(label: 'Analytics', icon: Icons.insights_outlined, route: '/admin/analytics'),
   _NavItem(label: 'Reimbursements', icon: Icons.receipt_long_outlined, route: '/admin/reimbursements',
       badgeSource: BadgeSource.reimbursements),
   _NavItem(label: 'Locations', icon: Icons.place_outlined, route: '/admin/locations'),

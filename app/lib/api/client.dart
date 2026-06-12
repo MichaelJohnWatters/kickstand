@@ -915,6 +915,48 @@ class ApiClient {
     await _send('POST', '/bikes/$bikeId/gps', data: {'lat': lat, 'lng': lng});
   }
 
+  // ----- Admin: analytics -----
+
+  /// GET /admin/analytics/bike-utilisation?from=&to=
+  Future<List<BikeUtilisationRow>> analyticsBikeUtilisation({
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    final res = await _send('GET', '/admin/analytics/bike-utilisation', query: {
+      'from': from.toUtc().toIso8601String(),
+      'to': to.toUtc().toIso8601String(),
+    });
+    return ((res.data as Map<String, dynamic>)['bikes'] as List? ?? const [])
+        .map((e) => BikeUtilisationRow.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// GET /admin/analytics/instructor-utilisation?from=&to=
+  Future<List<InstructorUtilisationRow>> analyticsInstructorUtilisation({
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    final res = await _send('GET', '/admin/analytics/instructor-utilisation', query: {
+      'from': from.toUtc().toIso8601String(),
+      'to': to.toUtc().toIso8601String(),
+    });
+    return ((res.data as Map<String, dynamic>)['instructors'] as List? ?? const [])
+        .map((e) => InstructorUtilisationRow.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// GET /admin/analytics/funnel?from=&to=
+  Future<FunnelStats> analyticsFunnel({
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    final res = await _send('GET', '/admin/analytics/funnel', query: {
+      'from': from.toUtc().toIso8601String(),
+      'to': to.toUtc().toIso8601String(),
+    });
+    return FunnelStats.fromJson(res.data as Map<String, dynamic>);
+  }
+
   /// POST /bikes — create a new bike. Backend defaults status to 'ready'
   /// and sets current_location_id = home_location_id.
   Future<FleetBike> createBike({

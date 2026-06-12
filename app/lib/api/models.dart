@@ -1569,3 +1569,131 @@ class BikeGPS {
         lastSeenAt: j['lastSeenAt'] ?? '',
       );
 }
+
+// ----- Analytics -----
+
+/// One bike's utilisation row from /admin/analytics/bike-utilisation.
+class BikeUtilisationRow {
+  final String bikeId;
+  final String nickname;
+  final String registration;
+  final int sessionsCount;
+  final int bookedMinutes;
+  final int availableMinutes;
+  final double utilisationPct;
+  final String lastSessionAt;
+  const BikeUtilisationRow({
+    required this.bikeId,
+    required this.nickname,
+    required this.registration,
+    required this.sessionsCount,
+    required this.bookedMinutes,
+    required this.availableMinutes,
+    required this.utilisationPct,
+    required this.lastSessionAt,
+  });
+  factory BikeUtilisationRow.fromJson(Map<String, dynamic> j) => BikeUtilisationRow(
+        bikeId: j['bikeId'] ?? '',
+        nickname: j['nickname'] ?? '',
+        registration: j['registration'] ?? '',
+        sessionsCount: (j['sessionsCount'] as num?)?.toInt() ?? 0,
+        bookedMinutes: (j['bookedMinutes'] as num?)?.toInt() ?? 0,
+        availableMinutes: (j['availableMinutes'] as num?)?.toInt() ?? 0,
+        utilisationPct: (j['utilisationPct'] as num?)?.toDouble() ?? 0,
+        lastSessionAt: j['lastSessionAt'] ?? '',
+      );
+}
+
+class InstructorUtilisationRow {
+  final String instructorId;
+  final String name;
+  final int sessionsTaught;
+  final int hoursTaughtX10; // tenths of an hour
+  final int earnedPence;
+  final int paidPence;
+  final int outstandingPence;
+  final List<int> weeklyTrend;
+  const InstructorUtilisationRow({
+    required this.instructorId,
+    required this.name,
+    required this.sessionsTaught,
+    required this.hoursTaughtX10,
+    required this.earnedPence,
+    required this.paidPence,
+    required this.outstandingPence,
+    required this.weeklyTrend,
+  });
+  double get hoursTaught => hoursTaughtX10 / 10.0;
+  factory InstructorUtilisationRow.fromJson(Map<String, dynamic> j) =>
+      InstructorUtilisationRow(
+        instructorId: j['instructorId'] ?? '',
+        name: j['name'] ?? '',
+        sessionsTaught: (j['sessionsTaught'] as num?)?.toInt() ?? 0,
+        hoursTaughtX10: (j['hoursTaughtX10'] as num?)?.toInt() ?? 0,
+        earnedPence: (j['earnedPence'] as num?)?.toInt() ?? 0,
+        paidPence: (j['paidPence'] as num?)?.toInt() ?? 0,
+        outstandingPence: (j['outstandingPence'] as num?)?.toInt() ?? 0,
+        weeklyTrend: ((j['weeklyTrend'] as List?) ?? const [])
+            .map((e) => (e as num).toInt())
+            .toList(),
+      );
+}
+
+class InstructorPassRate {
+  final String instructorId;
+  final String name;
+  final int attempts;
+  final int passes;
+  final double passPct;
+  const InstructorPassRate({
+    required this.instructorId,
+    required this.name,
+    required this.attempts,
+    required this.passes,
+    required this.passPct,
+  });
+  factory InstructorPassRate.fromJson(Map<String, dynamic> j) => InstructorPassRate(
+        instructorId: j['instructorId'] ?? '',
+        name: j['name'] ?? '',
+        attempts: (j['attempts'] as num?)?.toInt() ?? 0,
+        passes: (j['passes'] as num?)?.toInt() ?? 0,
+        passPct: (j['passPct'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+class FunnelStats {
+  final double signupToFirstBookingPct;
+  final int signupSample;
+  final double cbtCompletionPct;
+  final int cbtSample;
+  final double theoryPassPct;
+  final int theorySample;
+  final double practicalPassPct;
+  final int practicalSample;
+  final List<InstructorPassRate> perInstructorPassRate;
+  const FunnelStats({
+    required this.signupToFirstBookingPct,
+    required this.signupSample,
+    required this.cbtCompletionPct,
+    required this.cbtSample,
+    required this.theoryPassPct,
+    required this.theorySample,
+    required this.practicalPassPct,
+    required this.practicalSample,
+    required this.perInstructorPassRate,
+  });
+  factory FunnelStats.fromJson(Map<String, dynamic> j) => FunnelStats(
+        signupToFirstBookingPct:
+            (j['signupToFirstBookingPct'] as num?)?.toDouble() ?? 0,
+        signupSample: (j['signupSample'] as num?)?.toInt() ?? 0,
+        cbtCompletionPct: (j['cbtCompletionPct'] as num?)?.toDouble() ?? 0,
+        cbtSample: (j['cbtSample'] as num?)?.toInt() ?? 0,
+        theoryPassPct: (j['theoryPassPct'] as num?)?.toDouble() ?? 0,
+        theorySample: (j['theorySample'] as num?)?.toInt() ?? 0,
+        practicalPassPct: (j['practicalPassPct'] as num?)?.toDouble() ?? 0,
+        practicalSample: (j['practicalSample'] as num?)?.toInt() ?? 0,
+        perInstructorPassRate: ((j['perInstructorPassRate'] as List?) ?? const [])
+            .map((e) => InstructorPassRate.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}

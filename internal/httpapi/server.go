@@ -167,6 +167,9 @@ func (s *Server) routeTable() []routeSpec {
 		{"POST", "/bikes/{id}/mileage", false, s.handleRecordBikeMileage},
 		{"POST", "/bikes/{id}/gps", false, s.handleUpdateBikeGPS},
 		{"GET", "/admin/bikes/gps", false, s.handleListBikeGPS},
+		{"GET", "/admin/analytics/bike-utilisation", false, s.handleAnalyticsBikeUtilisation},
+		{"GET", "/admin/analytics/instructor-utilisation", false, s.handleAnalyticsInstructorUtilisation},
+		{"GET", "/admin/analytics/funnel", false, s.handleAnalyticsFunnel},
 		{"DELETE", "/bikes/{id}", false, s.handleDeleteBike},
 
 		// Admin CRUD — catalog
