@@ -202,6 +202,8 @@ var authMatrix = []accessRow{
 	{"POST", "/bikes/{id}/restore", staff, nil},
 	{"POST", "/bikes/{id}/move", staff, nil},
 	{"POST", "/bikes/{id}/mileage", staff, nil},
+	{"POST", "/bikes/{id}/gps", adminOwner, nil},
+	{"GET", "/admin/bikes/gps", adminOwner, nil},
 	{"DELETE", "/bikes/{id}", adminOwner, nil},
 
 	// Course catalog — read any-staff, write admin/owner.

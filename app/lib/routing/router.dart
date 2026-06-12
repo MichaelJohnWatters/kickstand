@@ -14,6 +14,7 @@ import '../screens/admin_fleet_screen.dart';
 import '../screens/admin_instructor_pay_screen.dart';
 import '../screens/admin_instructors_screen.dart';
 import '../screens/admin_locations_screen.dart';
+import '../screens/admin_gps_map_screen.dart';
 import '../screens/admin_logistics_screen.dart';
 import '../screens/admin_master_calendar_screen.dart';
 import '../screens/admin_overview_screen.dart';
@@ -207,6 +208,7 @@ GoRouter buildRouter(Ref ref) {
           ),
           GoRoute(path: '/admin/disruptions', pageBuilder: (_, __) => _instant(const AdminDisruptionsScreen())),
           GoRoute(path: '/admin/logistics', pageBuilder: (_, __) => _instant(const AdminLogisticsScreen())),
+          GoRoute(path: '/admin/gps', pageBuilder: (_, __) => _instant(const AdminGpsMapScreen())),
           GoRoute(path: '/admin/instructors', pageBuilder: (_, __) => _instant(const AdminInstructorsScreen())),
           GoRoute(path: '/admin/instructor-pay', pageBuilder: (_, __) => _instant(const AdminInstructorPayScreen())),
           GoRoute(path: '/admin/reimbursements', pageBuilder: (_, __) => _instant(const AdminReimbursementsScreen())),

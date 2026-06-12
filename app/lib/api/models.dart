@@ -1524,3 +1524,48 @@ class AuditPage {
         total: (j['total'] as num?)?.toInt() ?? 0,
       );
 }
+
+/// One bike's live-map row. lat/lng are null when the bike has never
+/// reported a fix — the map UI plots those in the off-map "no signal"
+/// panel. liveStatus is derived server-side and is the source of
+/// truth for marker colour.
+class BikeGPS {
+  final String id;
+  final String nickname;
+  final String registration;
+  final String status;              // raw DB status (ready/offline/in_use)
+  final String liveStatus;          // available / in_session / offline / needs_attention
+  final String currentLocationId;
+  final String currentLocationName;
+  final double? lat;
+  final double? lng;
+  final String lastSeenAt;          // RFC3339; empty when never seen
+
+  const BikeGPS({
+    required this.id,
+    required this.nickname,
+    required this.registration,
+    required this.status,
+    required this.liveStatus,
+    required this.currentLocationId,
+    required this.currentLocationName,
+    required this.lat,
+    required this.lng,
+    required this.lastSeenAt,
+  });
+
+  bool get hasFix => lat != null && lng != null;
+
+  factory BikeGPS.fromJson(Map<String, dynamic> j) => BikeGPS(
+        id: j['id'] ?? '',
+        nickname: j['nickname'] ?? '',
+        registration: j['registration'] ?? '',
+        status: j['status'] ?? '',
+        liveStatus: j['liveStatus'] ?? 'available',
+        currentLocationId: j['currentLocationId'] ?? '',
+        currentLocationName: j['currentLocationName'] ?? '',
+        lat: (j['lat'] as num?)?.toDouble(),
+        lng: (j['lng'] as num?)?.toDouble(),
+        lastSeenAt: j['lastSeenAt'] ?? '',
+      );
+}

@@ -214,6 +214,14 @@ All sidebar items live:
 - **Bike logistics** — date picker (defaults to tomorrow), per-move row with Move
   done. Picks up cross-site bike swaps automatically (derived query against
   bookings + bikes.current_location_id ≠ sessions.location_id).
+- **Live map** (`/admin/gps`) — `flutter_map` + OpenStreetMap tiles plot every
+  bike's last-known GPS fix over Northern Ireland. Markers colour by live
+  status (available green / in_session indigo / offline red / needs_attention
+  amber), tap → bottom card with reg + location + "last seen X ago". Bikes
+  with no fix appear in an off-map "No signal · N" panel. Provider-agnostic
+  write via `POST /bikes/{id}/gps` for schools wiring real trackers.
+  Scheduling/logistics engine never reads GPS — physical-vs-logical
+  separation per plan §7 stays intact.
 - **Instructors** — staff cards with **per-course accreditation** chips (each
   with expiry date). Edit sheet has a date picker per course. Invite modal too.
 - **Instructor pay** — hero with total outstanding, per-instructor stats,

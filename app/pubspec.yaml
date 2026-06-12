@@ -47,6 +47,11 @@ dependencies:
   firebase_core: ^3.6.0
   firebase_auth: ^5.3.1
 
+  # Live-map view for the manager GPS screen. OSM tiles via flutter_map —
+  # no API key, no billing. latlong2 is its companion coords type.
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
