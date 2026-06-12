@@ -538,6 +538,28 @@ func seedLaganValley(
 				{bikeAManual1, "A", "manual", "ready", locNewry, locNewry, 649,
 					"Honda CB650R", "Honda", "CB650R", "TRZ 5540", -1, -1, 0},
 			}
+			// Site centroids for GPS seeding — used to plant each bike on
+			// the live-map screen near its current location with a small
+			// per-bike offset. The scheduling/logistics engine never reads
+			// these (plan §7); they only feed the manager map. Coords are
+			// the ~industrial-estate centres for each site.
+			siteCoords := map[string][2]float64{
+				locBelfast: {54.5825, -5.9655},
+				locLisburn: {54.5188, -6.0640},
+				locNewry:   {54.1750, -6.3380},
+			}
+			// Deterministic jitter so bikes at the same site don't stack
+			// on one pixel. Salt is the bike ID's checksum.
+			jitter := func(id string, lat, lng float64) (float64, float64) {
+				var sum int
+				for _, c := range id {
+					sum += int(c)
+				}
+				dLat := float64((sum%21)-10) / 1000.0 // ±0.010° ≈ ±1.1 km
+				dLng := float64(((sum/21)%21)-10) / 1000.0
+				return lat + dLat, lng + dLng
+			}
+			gpsTimestamp := now.UTC().Format(time.RFC3339)
 			for _, b := range bikes {
 				// First-run insert (idempotent via OR IGNORE).
 				if err := exec(`INSERT OR IGNORE INTO bikes
@@ -562,15 +584,27 @@ func seedLaganValley(
 				if b.mileage > 0 {
 					mileage = b.mileage
 				}
+				// Last bike (Honda CB650R — "newly imported") stays without
+				// a GPS fix so the live-map "No signal" panel demos.
+				var gpsLat, gpsLng, gpsAt any
+				if b.id != bikeAManual1 {
+					base, ok := siteCoords[b.current]
+					if ok {
+						la, lo := jitter(b.id, base[0], base[1])
+						gpsLat, gpsLng, gpsAt = la, lo, gpsTimestamp
+					}
+				}
 				// Backfill: earlier seed runs created bikes without the
 				// detail columns. UPDATE keeps re-running cheap and lets us
 				// refresh values when this seed is edited.
 				if err := exec(`UPDATE bikes SET
 				    nickname = ?, make = ?, model = ?, registration = ?, engine_cc = ?,
-				    mot_expires_on = ?, tax_expires_on = ?, current_mileage_miles = ?
+				    mot_expires_on = ?, tax_expires_on = ?, current_mileage_miles = ?,
+				    last_known_lat = ?, last_known_lng = ?, last_known_at = ?
 				    WHERE id = ? AND school_id = ?`,
 					b.nickname, b.make, b.model, b.registration, b.cc,
 					motExpiry, taxExpiry, mileage,
+					gpsLat, gpsLng, gpsAt,
 					b.id, schoolID); err != nil {
 					return err
 				}

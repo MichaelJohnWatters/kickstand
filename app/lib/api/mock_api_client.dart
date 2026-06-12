@@ -149,6 +149,8 @@ class MockApiClient extends ApiClient {
         return _seed['travel_times'];
       case '/bikes':
         return _seed['bikes'];
+      case '/admin/bikes/gps':
+        return _seed['bike_gps'] ?? _syntheticBikeGpsFromBikes();
       case '/course-types':
         return _seed['course_types'];
       case '/instructors':
@@ -449,6 +451,42 @@ class MockApiClient extends ApiClient {
 
   String _studentId() => (_seed['alex_me'] as Map<String, dynamic>?)?['userId'] ?? 'user_stu';
   String _instructorId() => (_seed['dave_me'] as Map<String, dynamic>?)?['userId'] ?? 'user_instr';
+
+  // Synthesises a plausible /admin/bikes/gps payload from whatever the
+  // fleet seed has, so demo mode doesn't 404 the live-map screen even
+  // when scripts/dump-demo.sh hasn't been re-run since the GPS endpoint
+  // landed. Falls back to the canned bike_gps.json once it exists.
+  Map<String, dynamic> _syntheticBikeGpsFromBikes() {
+    final base = (_seed['bikes'] as Map<String, dynamic>?) ?? const {};
+    final bikes = (base['bikes'] as List?) ?? const [];
+    // Three demo site centroids so the map has visible markers.
+    const sites = <String, List<double>>{
+      'loc_belfast': [54.5825, -5.9655],
+      'loc_lisburn': [54.5188, -6.0640],
+      'loc_newry': [54.1750, -6.3380],
+    };
+    final out = <Map<String, dynamic>>[];
+    final now = DateTime.now().toUtc().toIso8601String();
+    for (final raw in bikes) {
+      final b = (raw as Map).cast<String, dynamic>();
+      final locId = (b['currentLocationId'] ?? b['homeLocationId'] ?? '').toString();
+      final coords = sites[locId];
+      final liveStatus = (b['status'] ?? '') == 'offline' ? 'offline' : 'available';
+      out.add({
+        'id': b['id'],
+        'nickname': b['nickname'] ?? '',
+        'registration': b['registration'] ?? '',
+        'status': b['status'] ?? '',
+        'liveStatus': liveStatus,
+        'currentLocationId': locId,
+        'currentLocationName': b['currentLocationName'] ?? '',
+        if (coords != null) 'lat': coords[0] + (out.length % 5 - 2) * 0.003,
+        if (coords != null) 'lng': coords[1] + (out.length % 7 - 3) * 0.003,
+        'lastSeenAt': coords != null ? now : '',
+      });
+    }
+    return {'bikes': out};
+  }
 
   /// The identity the AuthController should pin in demo mode — derived
   /// from the same `/me` payload the real backend returns. Public so

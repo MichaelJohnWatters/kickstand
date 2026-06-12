@@ -58,6 +58,7 @@ const _routes = <String>[
   '/admin/fleet/bike_a1m1',
   '/admin/disruptions',
   '/admin/logistics',
+  '/admin/gps',
   '/admin/instructors',
   '/admin/instructor-pay',
   '/admin/reimbursements',

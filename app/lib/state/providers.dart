@@ -73,6 +73,13 @@ final fleetProvider = FutureProvider<List<FleetBike>>((ref) async {
   return ref.read(apiClientProvider).listFleet();
 });
 
+/// Bike GPS snapshots for the live-map screen. Auto-disposed because
+/// the screen polls on its own ambient timer (refresh.dart) and we
+/// don't want a stale list sitting in cache for other screens.
+final bikeGpsProvider = FutureProvider.autoDispose<List<BikeGPS>>((ref) async {
+  return ref.read(apiClientProvider).listBikeGPS();
+});
+
 final openDisruptionsProvider =
     FutureProvider<List<Map<String, dynamic>>>((ref) async {
   return ref.read(apiClientProvider).listDisruptions(openOnly: true);

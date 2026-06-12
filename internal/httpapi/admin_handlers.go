@@ -412,6 +412,71 @@ func (s *Server) handleDeleteBike(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ----- Bike GPS (live map view) -----
+//
+// The scheduling/logistics engine never reads these endpoints — they
+// feed the presentational live-map screen only. See plan §7 + the
+// invariant in `gps-and-analytics-plan.md`.
+
+func (s *Server) handleUpdateBikeGPS(w http.ResponseWriter, r *http.Request) {
+	id, _ := identityFromContext(r.Context())
+	if !requireAdminOwner(w, id) {
+		return
+	}
+	scope := tenant.NewScope(s.DB, id.SchoolID)
+	var req struct {
+		Lat float64 `json:"lat"`
+		Lng float64 `json:"lng"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_json", err.Error())
+		return
+	}
+	bikeID := domain.BikeID(r.PathValue("id"))
+	if err := admin.UpdateBikeGPS(r.Context(), scope, bikeID,
+		admin.UpdateBikeGPSRequest{Lat: req.Lat, Lng: req.Lng}); err != nil {
+		writeAdminError(w, err)
+		return
+	}
+	audit.Describe(r.Context(), "Updated GPS for %s",
+		bikeDisplayName(r.Context(), s.DB, id.SchoolID, bikeID))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleListBikeGPS(w http.ResponseWriter, r *http.Request) {
+	id, _ := identityFromContext(r.Context())
+	if !requireAdminOwner(w, id) {
+		return
+	}
+	scope := tenant.NewScope(s.DB, id.SchoolID)
+	rows, err := admin.ListBikeGPS(r.Context(), scope)
+	if err != nil {
+		writeAdminError(w, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(rows))
+	for _, b := range rows {
+		view := map[string]any{
+			"id":                  b.ID,
+			"nickname":            b.Nickname,
+			"registration":        b.Registration,
+			"status":              b.Status,
+			"liveStatus":          b.LiveStatus,
+			"currentLocationId":   b.CurrentLocationID,
+			"currentLocationName": b.CurrentLocationName,
+			"lastSeenAt":          b.LastSeenAt,
+		}
+		if b.Lat != nil {
+			view["lat"] = *b.Lat
+		}
+		if b.Lng != nil {
+			view["lng"] = *b.Lng
+		}
+		out = append(out, view)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"bikes": out})
+}
+
 // ----- Course types -----
 
 func courseTypeView(c admin.CourseTypeRow) map[string]any {

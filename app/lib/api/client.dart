@@ -893,6 +893,28 @@ class ApiClient {
         .toList();
   }
 
+  /// GET /admin/bikes/gps — manager live-map data. Scheduling engine
+  /// never reads these snapshots (plan §7 invariant); this is purely
+  /// for visualisation.
+  Future<List<BikeGPS>> listBikeGPS() async {
+    final res = await _send('GET', '/admin/bikes/gps');
+    return ((res.data as Map<String, dynamic>)['bikes'] as List? ?? const [])
+        .map((e) => BikeGPS.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// POST /bikes/{id}/gps — write a fresh fix. Provider-agnostic: a
+  /// school's tracker webhook posts here, or staff can hit it from
+  /// curl. No production caller in the UI today; documented for
+  /// completeness.
+  Future<void> updateBikeGPS({
+    required String bikeId,
+    required double lat,
+    required double lng,
+  }) async {
+    await _send('POST', '/bikes/$bikeId/gps', data: {'lat': lat, 'lng': lng});
+  }
+
   /// POST /bikes — create a new bike. Backend defaults status to 'ready'
   /// and sets current_location_id = home_location_id.
   Future<FleetBike> createBike({

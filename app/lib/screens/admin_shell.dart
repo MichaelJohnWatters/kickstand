@@ -56,6 +56,7 @@ const _navItems = <_NavItem>[
       badgeSource: BadgeSource.fleetOffline),
   _NavItem(label: 'Bike logistics', icon: Icons.local_shipping_outlined, route: '/admin/logistics',
       badgeSource: BadgeSource.logistics),
+  _NavItem(label: 'Live map', icon: Icons.my_location, route: '/admin/gps'),
   _NavItem(label: 'Disruptions', icon: Icons.report_outlined, route: '/admin/disruptions',
       badgeSource: BadgeSource.disruptions),
   _NavItem(label: 'Incidents', icon: Icons.report_problem_outlined, route: '/admin/incidents'),
