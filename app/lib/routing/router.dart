@@ -46,6 +46,7 @@ import '../screens/licence_screen.dart';
 import '../screens/login_screen.dart';
 import '../screens/signup_screen.dart';
 import '../screens/my_bookings_screen.dart';
+import '../screens/notification_prefs_screen.dart';
 import '../screens/notifications_screen.dart';
 import '../screens/progress_screen.dart';
 import '../screens/splash_screen.dart';
@@ -144,6 +145,7 @@ GoRouter buildRouter(Ref ref) {
 
       // Shared between roles.
       GoRoute(path: '/notifications', builder: (_, __) => const NotificationsScreen()),
+      GoRoute(path: '/notifications/prefs', builder: (_, __) => const NotificationPrefsScreen()),
 
       // Student shell. Tab switches use NoTransitionPage so the navigation
       // feels instant on web — Material's default fade-in transition is the

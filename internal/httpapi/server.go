@@ -222,6 +222,8 @@ func (s *Server) routeTable() []routeSpec {
 		{"GET", "/me/notifications", false, s.handleListMyNotifications},
 		{"POST", "/me/notifications/{id}/read", false, s.handleMarkNotificationRead},
 		{"POST", "/me/notifications/read-all", false, s.handleMarkAllNotificationsRead},
+		{"GET", "/me/notification-prefs", false, s.handleGetNotificationPrefs},
+		{"PUT", "/me/notification-prefs", false, s.handlePutNotificationPrefs},
 		{"POST", "/me/device-tokens", false, s.handleRegisterDeviceToken},
 		{"DELETE", "/me/device-tokens/{token}", false, s.handleUnregisterDeviceToken},
 

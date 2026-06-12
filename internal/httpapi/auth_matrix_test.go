@@ -254,6 +254,8 @@ var authMatrix = []accessRow{
 	{"GET", "/me/notifications", anyAuthed, nil},
 	{"POST", "/me/notifications/{id}/read", anyAuthed, nil},
 	{"POST", "/me/notifications/read-all", anyAuthed, nil},
+	{"GET", "/me/notification-prefs", anyAuthed, nil},
+	{"PUT", "/me/notification-prefs", anyAuthed, nil},
 	{"POST", "/me/device-tokens", anyAuthed, nil},
 	{"DELETE", "/me/device-tokens/{token}", anyAuthed, nil},
 

@@ -114,6 +114,13 @@ final funnelStatsProvider = FutureProvider.autoDispose<FunnelStats>((ref) async 
   return ref.read(apiClientProvider).analyticsFunnel(from: w.from, to: w.to);
 });
 
+/// Per-category notification prefs. Auto-disposed since it's only
+/// read on the prefs screen; the dispatcher gate lives server-side.
+final notificationPrefsProvider =
+    FutureProvider.autoDispose<List<NotificationPrefs>>((ref) async {
+  return ref.read(apiClientProvider).getNotificationPrefs();
+});
+
 final openDisruptionsProvider =
     FutureProvider<List<Map<String, dynamic>>>((ref) async {
   return ref.read(apiClientProvider).listDisruptions(openOnly: true);

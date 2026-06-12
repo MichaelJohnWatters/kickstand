@@ -270,6 +270,12 @@ All sidebar items live:
 - **API errors** — typed `ApiException` with stable `code`; screens branch on code
   for friendly copy (e.g. `capacity_full` vs `no_suitable_bike`)
 - **Bottom sheets** — consistent grabber + content pattern, keyboard inset handled
+- **Notification preferences** (`/notifications/prefs`) — opened from the bell
+  AppBar via a tune icon, role-agnostic. Per-category × per-channel toggles
+  (4 categories × 4 channels). Autosaves on each flip. Server-side gate in
+  `notify.insertNotification` honours in-app prefs immediately; email/push/SMS
+  flips are stored and switch on automatically when those channels light up
+  (FCM phase 2). Migration 0026 added `notification_prefs`.
 
 ---
 
@@ -386,8 +392,6 @@ These are deferred deliberately, not bugs:
   ready, but no Firebase project configured. When you provide a service-account
   JSON + iOS/Android config files I can wire `firebase_messaging` in the client +
   the Go dispatcher. The in-app bell already works without it.
-- **Notification preferences screen** — per-channel × per-category opt-outs (plan
-  phase 2)
 - **Booking-scoped messaging / chat** — plan §8b phase 3 with safeguarding work
 - **GDPR data export / right-to-erasure flows** — plan §9 acknowledged
 - **Audit trail UI — filter / search** — `audit_log` table records every

@@ -1697,3 +1697,47 @@ class FunnelStats {
             .toList(),
       );
 }
+
+/// Per-category notification preferences. One row per category;
+/// channel flags indicate which delivery channels are subscribed.
+/// Defaults: in_app/email/push on, sms off (paid channel never
+/// auto-enables).
+class NotificationPrefs {
+  final String category; // booking | disruption | payment | reminder
+  final bool inApp;
+  final bool email;
+  final bool push;
+  final bool sms;
+  const NotificationPrefs({
+    required this.category,
+    required this.inApp,
+    required this.email,
+    required this.push,
+    required this.sms,
+  });
+
+  NotificationPrefs copyWith({bool? inApp, bool? email, bool? push, bool? sms}) =>
+      NotificationPrefs(
+        category: category,
+        inApp: inApp ?? this.inApp,
+        email: email ?? this.email,
+        push: push ?? this.push,
+        sms: sms ?? this.sms,
+      );
+
+  factory NotificationPrefs.fromJson(Map<String, dynamic> j) => NotificationPrefs(
+        category: j['category'] ?? '',
+        inApp: j['inApp'] == true,
+        email: j['email'] == true,
+        push: j['push'] == true,
+        sms: j['sms'] == true,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'category': category,
+        'inApp': inApp,
+        'email': email,
+        'push': push,
+        'sms': sms,
+      };
+}

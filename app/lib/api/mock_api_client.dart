@@ -158,6 +158,8 @@ class MockApiClient extends ApiClient {
             _syntheticInstructorUtilisation();
       case '/admin/analytics/funnel':
         return _seed['analytics_funnel'] ?? _syntheticFunnel();
+      case '/me/notification-prefs':
+        return _seed['notification_prefs'] ?? _defaultNotificationPrefs();
       case '/course-types':
         return _seed['course_types'];
       case '/instructors':
@@ -521,6 +523,17 @@ class MockApiClient extends ApiClient {
             DateTime.now().subtract(const Duration(days: 30)).toUtc().toIso8601String(),
         'to': DateTime.now().toUtc().toIso8601String(),
       }
+    };
+  }
+
+  Map<String, dynamic> _defaultNotificationPrefs() {
+    return {
+      'prefs': const [
+        {'category': 'booking', 'inApp': true, 'email': true, 'push': true, 'sms': false},
+        {'category': 'disruption', 'inApp': true, 'email': true, 'push': true, 'sms': false},
+        {'category': 'payment', 'inApp': true, 'email': true, 'push': true, 'sms': false},
+        {'category': 'reminder', 'inApp': true, 'email': true, 'push': true, 'sms': false},
+      ],
     };
   }
 

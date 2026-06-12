@@ -297,6 +297,23 @@ class ApiClient {
     await _send('POST', '/me/notifications/read-all');
   }
 
+  /// GET /me/notification-prefs — always returns one row per
+  /// canonical category, filled with defaults for any the user
+  /// hasn't explicitly set.
+  Future<List<NotificationPrefs>> getNotificationPrefs() async {
+    final res = await _send('GET', '/me/notification-prefs');
+    return ((res.data as Map<String, dynamic>)['prefs'] as List? ?? const [])
+        .map((e) => NotificationPrefs.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// PUT /me/notification-prefs — upserts the whole set.
+  Future<void> updateNotificationPrefs(List<NotificationPrefs> prefs) async {
+    await _send('PUT', '/me/notification-prefs', data: {
+      'prefs': prefs.map((p) => p.toJson()).toList(),
+    });
+  }
+
   // ----- Instructor: calendar + session detail -----
 
   /// /calendar — for instructors auto-scopes to their own sessions.
