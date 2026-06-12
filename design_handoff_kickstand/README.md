@@ -1,5 +1,13 @@
 # Handoff: Kickstand — Rider Training Management Platform
 
+> **ARCHIVED 2026-06-12.** This bundle was the original design prototype
+> handed off to engineering. Its job is done — the real Flutter app under
+> `app/` is now the source of truth for UI, and the runnable demo lives
+> at `dist/marketing/` (see `demo-mode-plan.md`). Files here are kept
+> for historical reference (design tokens, copy, interaction notes) but
+> are no longer edited. Same applies to `Kickstand Preview.html` at the
+> repo root.
+
 ## Overview
 Kickstand is a multi-tenant SaaS for UK motorcycle training schools. This bundle is the **design prototype** for the MVP across three clients:
 - **Student** (mobile-first) — browse & book training, manage bookings, track progress & licence/test documents.

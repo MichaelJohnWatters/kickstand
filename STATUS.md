@@ -3,7 +3,7 @@
 State-of-build snapshot. The plan in `motorbike-training-plan.md` stays the design
 source of truth; this doc tracks what's actually built and where to pick up.
 
-Last updated: 2026-06-11
+Last updated: 2026-06-12
 
 ---
 
@@ -186,6 +186,17 @@ All sidebar items live:
     badge. Engine guards restore on no-booking-history so only signup-time
     rejections can be reversed (`signup.Restore` / `POST /signups/{id}/restore`).
 - **Bike fleet** — filter chips, Take Offline (reason sheet) / Restore actions.
+  Cards carry **registration pill** (tappable → gov.uk vehicle-enquiry), **MOT
+  pill** + **tax pill** colour-coded by status (`ok` / `due_soon` / `due_urgent`
+  / `expired`) computed from `bikes.{mot,tax}_expires_on` against the school's
+  `{mot,tax}_{warn,urgent}_days` thresholds, current mileage, and YTD spend.
+  Sidebar fleet badge counts `due_urgent + expired`. "MOT due (N)" filter chip.
+- **Bike detail** (`/admin/bikes/:id`) — drill-down from a fleet card. Header
+  with bike info + pills. **Update** sheet for MOT/tax/mileage/reg. **Maintenance
+  log** section — every `bike_expenses` row with category (parts / labour / mot
+  / tax / service / other), amount, vendor, date, receipt thumb. Inline `+` to
+  record. When MOT or tax is updated via the sheet, a follow-up sheet pre-fills
+  the right category + amount + asks for the receipt.
 - **Disruptions** — list with open badge; per-affected-booking card now uses a
   `_CandidateGrid` of colour-coded tiles instead of one suggested swap:
   - Green tile: same-site bike (drop-in swap).
@@ -217,6 +228,10 @@ All sidebar items live:
   reimburse).
 - **Templates** — recurring schedules with "Unassigned" instructor chip; Generate
   next-N-weeks CTA.
+- **Settings** (`/admin/settings`) — single home for school config: School
+  profile · Onboarding mode · Booking policy · Fleet warning thresholds (the
+  `{mot,tax}_{warn,urgent}_days` knobs that drive the fleet pills). Single save
+  at the bottom; reuses `schoolSettingsProvider`.
 - **Compliance** — bike MOT/tax + instructor accreditation + insurance dashboard.
   Per-instructor accreditation list with course-coloured chips, worst-of status.
 
@@ -267,6 +282,29 @@ make run-firebase     # Go server wired to the Auth emulator
 
 Needs Node ≥20 and Java ≥11. See `firebase-auth-migration.md` for the
 plan and `firebase.json` for the config.
+
+### Static "try it" demo + marketing wrapper
+
+The runnable demo at `dist/marketing/demo/` and the hand-written marketing
+wrapper at `dist/marketing/index.html` are the embeddable artifact for the
+company website. The demo IS the real Flutter app — built with
+`--dart-define=KS_DEMO_MODE=true`, which swaps `apiClientProvider` for a
+`MockApiClient` that extends the real `ApiClient` and overrides the `_send`
+seam to return JSON dumps from `app/assets/demo/`. Writes are accepted
+optimistically into an in-memory store; refresh resets. No backend, no
+Firebase round-trip — `/welcome` is replaced with a 3-tile role picker
+(Owen / Dave / Alex).
+
+```bash
+make demo-data        # dumps the running backend's JSON into app/assets/demo/
+make web-demo         # Flutter web build with KS_DEMO_MODE=true → dist/marketing/demo/
+make marketing-demo   # full pipeline: demo-data + web-demo + local preview server
+```
+
+Single rsync of `dist/marketing/` onto any static host = live demo. See
+`demo-mode-plan.md` for the design. The original JSX prototype
+(`design_handoff_kickstand/` + `Kickstand Preview.html`) is archived —
+the real app and the demo build are now the source of truth.
 
 ### Seeded credentials (`password` for all)
 
@@ -338,6 +376,11 @@ These are deferred deliberately, not bugs:
   `firebase_app_check` to the Flutter app, verify the `X-Firebase-AppCheck`
   header in `authMiddleware`. Roll out in monitor mode for a week before
   enforcing.
+- **DVLA polling** — automatic MOT + tax expiry refresh via the gov.uk MOT
+  history + VES APIs. Manual update flow on the bike-detail sheet covers day
+  one; the polling worker is a chunk-4 follow-up in `fleet-features-plan.md`
+  waiting on API keys (register at
+  <https://register-for-mot-history-api.service.gov.uk/>).
 - **Stripe / online prepay** — plan phase 2
 - **GPS history** — schema has the nullable fields; live map view deferred to
   phase 3
