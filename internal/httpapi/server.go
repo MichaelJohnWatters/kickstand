@@ -122,6 +122,7 @@ func (s *Server) routeTable() []routeSpec {
 		{"POST", "/sessions/{id}/waitlist", false, s.handleJoinWaitlist},
 		{"DELETE", "/sessions/{id}/waitlist", false, s.handleLeaveWaitlist},
 		{"GET", "/sessions/{id}/waitlist", false, s.handleListWaitlist},
+		{"DELETE", "/sessions/{id}/waitlist/{entryId}", false, s.handleRemoveWaitlistEntry},
 		{"GET", "/me/waitlist", false, s.handleMyWaitlist},
 
 		// Session templates — recurring schedule recipes that materialise sessions.

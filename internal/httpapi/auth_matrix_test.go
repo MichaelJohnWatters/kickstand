@@ -87,6 +87,7 @@ func (r accessRow) substitute(role string, users map[string]string) string {
 	path = strings.ReplaceAll(path, "{from}", "loc_t")
 	path = strings.ReplaceAll(path, "{to}", "loc_t2")
 	path = strings.ReplaceAll(path, "{token}", "tok_t")
+	path = strings.ReplaceAll(path, "{entryId}", "wle_t")
 	// /students/{id} — use the testing student's own ID so the
 	// ownership check passes for them. Other roles always pass the
 	// role gate regardless.
@@ -159,6 +160,7 @@ var authMatrix = []accessRow{
 	{"POST", "/sessions/{id}/waitlist", studentOnly, nil},
 	{"DELETE", "/sessions/{id}/waitlist", studentOnly, nil},
 	{"GET", "/sessions/{id}/waitlist", staff, nil},
+	{"DELETE", "/sessions/{id}/waitlist/{entryId}", staff, nil},
 	{"GET", "/me/waitlist", studentOnly, nil},
 	{"GET", "/closures", adminOwner, nil},
 	{"POST", "/closures", adminOwner, nil},

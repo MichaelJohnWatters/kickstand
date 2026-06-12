@@ -121,6 +121,13 @@ final notificationPrefsProvider =
   return ref.read(apiClientProvider).getNotificationPrefs();
 });
 
+/// Student's active waitlist entries. Read from My Bookings to render
+/// the "you're waiting on these" section. Long-lived so leaving a
+/// waitlist or auto-promotion can invalidate from anywhere.
+final myWaitlistProvider = FutureProvider<List<MyWaitlistEntry>>((ref) async {
+  return ref.read(apiClientProvider).listMyWaitlist();
+});
+
 final openDisruptionsProvider =
     FutureProvider<List<Map<String, dynamic>>>((ref) async {
   return ref.read(apiClientProvider).listDisruptions(openOnly: true);

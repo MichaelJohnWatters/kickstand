@@ -59,6 +59,7 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
           padding: const EdgeInsets.fromLTRB(18, 8, 18, 0),
           child: Column(
             children: [
+              const _WaitlistSection(),
               _SegmentedControl(
                 value: _segment,
                 onChange: (v) => setState(() => _segment = v),
@@ -77,6 +78,141 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
         ),
       ),
     );
+  }
+}
+
+class _WaitlistSection extends ConsumerWidget {
+  const _WaitlistSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(myWaitlistProvider);
+    return async.maybeWhen(
+      data: (entries) {
+        if (entries.isEmpty) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(left: 4, bottom: 6),
+                child: Text('On the waitlist',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: KsColors.ink2)),
+              ),
+              for (final e in entries) _WaitlistRow(entry: e),
+            ],
+          ),
+        );
+      },
+      orElse: () => const SizedBox.shrink(),
+    );
+  }
+}
+
+class _WaitlistRow extends ConsumerStatefulWidget {
+  final MyWaitlistEntry entry;
+  const _WaitlistRow({required this.entry});
+
+  @override
+  ConsumerState<_WaitlistRow> createState() => _WaitlistRowState();
+}
+
+class _WaitlistRowState extends ConsumerState<_WaitlistRow> {
+  bool _leaving = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final e = widget.entry;
+    final accent = courseAccent(e.courseAccent);
+    final dateStr = DateFormat('EEE d MMM · HH:mm').format(e.sessionStartsAt.toLocal());
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: KsColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: KsColors.border),
+      ),
+      child: IntrinsicHeight(
+        child: Row(children: [
+          Container(width: 4, decoration: BoxDecoration(
+            color: accent,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(12),
+              bottomLeft: Radius.circular(12),
+            ),
+          )),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Text(e.courseCode,
+                        style: GoogleFonts.spaceMono(
+                            color: accent,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12)),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: KsColors.primaryTint,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text('#${e.position}',
+                          style: const TextStyle(
+                              color: KsColors.primary,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 11)),
+                    ),
+                  ]),
+                  const SizedBox(height: 2),
+                  Text(e.courseName.isEmpty ? e.courseCode : e.courseName,
+                      style: const TextStyle(
+                          color: KsColors.ink, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  Text(
+                    e.locationName.isEmpty ? dateStr : '$dateStr · ${e.locationName}',
+                    style: const TextStyle(color: KsColors.ink3, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: TextButton(
+              onPressed: _leaving ? null : _leave,
+              child: Text(_leaving ? '…' : 'Leave',
+                  style: TextStyle(
+                      color: _leaving ? KsColors.ink3 : KsColors.primary,
+                      fontWeight: FontWeight.w700)),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _leave() async {
+    setState(() => _leaving = true);
+    try {
+      await ref.read(apiClientProvider).leaveSessionWaitlist(widget.entry.sessionId);
+      ref.invalidate(myWaitlistProvider);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Couldn't leave the waitlist: $e")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _leaving = false);
+    }
   }
 }
 
