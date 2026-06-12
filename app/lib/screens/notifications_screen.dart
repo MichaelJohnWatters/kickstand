@@ -35,6 +35,11 @@ class NotificationsScreen extends ConsumerWidget {
               child: Text('Mark all read',
                   style: GoogleFonts.plusJakartaSans(color: KsColors.primary, fontWeight: FontWeight.w700)),
             ),
+          IconButton(
+            tooltip: 'Notification preferences',
+            icon: const Icon(Icons.tune, color: KsColors.ink),
+            onPressed: () => context.push('/notifications/prefs'),
+          ),
         ],
       ),
       body: RefreshIndicator(

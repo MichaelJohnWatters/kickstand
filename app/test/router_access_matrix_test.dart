@@ -32,6 +32,7 @@ const _routes = <String>[
 
   // Shared
   '/notifications',
+  '/notifications/prefs',
 
   // Student shell
   '/student',
@@ -107,6 +108,7 @@ String? expected(String? role, String location) {
 
   // Shared pages reachable by every authed user.
   if (location == '/notifications') return null;
+  if (location == '/notifications/prefs') return null;
 
   // Role-prefixed routes — same role can reach, others bounce home.
   if (location.startsWith('/student')) {

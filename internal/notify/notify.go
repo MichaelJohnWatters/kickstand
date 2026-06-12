@@ -236,7 +236,17 @@ func insertNotification(ctx context.Context, scope *tenant.Scope, eventID domain
 	if recipient == "" {
 		return nil // nothing to do (e.g. a school-cancelled booking with no recipient resolved)
 	}
-	_, err := scope.Conn().ExecContext(ctx, `
+	// Honour the recipient's per-category in_app pref. Default is "on"
+	// for everyone who hasn't visited the prefs screen — getting muted
+	// requires an explicit opt-out.
+	enabled, err := channelEnabledForUser(ctx, scope, recipient, "in_app", category)
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return nil
+	}
+	_, err = scope.Conn().ExecContext(ctx, `
 		INSERT INTO notifications (id, school_id, event_id, recipient_id, channel, category, status, sent_at)
 		VALUES (?, ?, ?, ?, 'in_app', ?, 'sent', ?)
 	`, domain.NewID(), string(scope.SchoolID()), string(eventID), string(recipient),
