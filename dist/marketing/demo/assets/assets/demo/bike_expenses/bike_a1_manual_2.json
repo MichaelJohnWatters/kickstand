@@ -1,0 +1,35 @@
+{
+  "expenses": [
+    {
+      "amountPence": 11000,
+      "bikeId": "bike_a1_manual_2",
+      "category": "labour",
+      "id": "bm_a1m2_labour",
+      "notes": "Drive train fit + adjust",
+      "occurredAt": "2026-04-05",
+      "receiptContentType": "image/jpeg",
+      "receiptSizeBytes": 19928,
+      "receiptThumb": "/9j/2wCEAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk8BDg4OExETJhUVJk81LTVPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT//AABEIADIAMgMBIgACEQEDEQH/xAGiAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgsQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+gEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoLEQACAQIEBAMEBwUEBAABAncAAQIDEQQFITEGEkFRB2FxEyIygQgUQpGhscEJIzNS8BVictEKFiQ04SXxFxgZGiYnKCkqNTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqCg4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2dri4+Tl5ufo6ery8/T19vf4+fr/2gAMAwEAAhEDEQA/AO2vFtrWRVTRXuAwzuhhQgexyRVfz4P+hbuv+/Ef+Nat5bJdW5Roo5SOVEmduffFZn9kS/8AQP07/vt/8Kak+47sb58H/Qt3X/fiP/Gjz4P+hbuv+/Ef+NO/siX/AKB+nf8Afb/4Uf2RL/0D9O/77f8Awp8z7hdjfPg/6Fu6/wC/Ef8AjUkMlvLMkZ8Pzxhjgu8CbV9zzTf7Il/6B+nf99v/AIVd0+wFsWka2t4pDwDCWPHvmjmfcLsl+wWX/Ppb/wDfsUfYLL/n0t/+/YqxRU8z7hdlDU7EXWx1iMki8YNw8Qx/wHrWQ1rAjlHFsrKcEHVpAR+lbtzNdxuotrMTqRyTMEwfTkVRa7lLEtploT3JuUz/ACoQjP8As9t62n/g3ko+z23raf8Ag3kq/wDapP8AoF2f/gTH/hR9qk/6Bdn/AOBMf+FMCh9ntvW0/wDBvJV+w0wLOkzw7VX5kZL2SQE9uDgEUfapP+gXZ/8AgTH/AIVat7m9dkB09EiPG9bhWAH0A5pAXqKKKQxsgcxsImVXx8pYZAP0rMOlzE5I0wk/9OX/ANlU2oWV3dSo1tqc1oqrgqiBgx9eaqf2Rqf/AEMN1/35SmIl/sub00z/AMAv/sqP7Lm9NM/8Av8A7Kov7I1P/oYbr/vylH9kan/0MN1/35SgCX+y5vTTP/AL/wCyq9aRSwxeXK0JAPyiKPYAPpk1mf2Rqf8A0MN1/wB+UqW30zUIriOSXXLiZFbLRtEoDD0oA1aKKKQwooooAKKKKACiiigAooooA//Z",
+      "recordedAt": "2026-06-08T22:36:04Z",
+      "recordedBy": "user_owen",
+      "recordedByName": "Owen O'Neill",
+      "vendor": "Belfast Honda Service"
+    },
+    {
+      "amountPence": 7400,
+      "bikeId": "bike_a1_manual_2",
+      "category": "parts",
+      "id": "bm_a1m2_chain",
+      "notes": "Chain & sprocket set",
+      "occurredAt": "2026-04-04",
+      "receiptContentType": "image/jpeg",
+      "receiptSizeBytes": 19867,
+      "receiptThumb": "/9j/2wCEAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk8BDg4OExETJhUVJk81LTVPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT//AABEIADIAMgMBIgACEQEDEQH/xAGiAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgsQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+gEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoLEQACAQIEBAMEBwUEBAABAncAAQIDEQQFITEGEkFRB2FxEyIygQgUQpGhscEJIzNS8BVictEKFiQ04SXxFxgZGiYnKCkqNTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqCg4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2dri4+Tl5ufo6ery8/T19vf4+fr/2gAMAwEAAhEDEQA/AO3vBbWsiqmjPcBhndDChA9jkiq/2iH/AKFy6/78R/41qXlsl1blGijlI5USZ2598Vmf2RL/ANA/Tv8Avt/8Kak+4rIT7RD/ANC5df8AfiP/ABo+0Q/9C5df9+I/8aX+yJf+gfp3/fb/AOFH9kS/9A/Tv++3/wAKfM+4WQn2iH/oXLr/AL8R/wCNPhkglmSM6BPGGOC7wJtX3PNN/siX/oH6d/32/wDhV3T7AWxaRra3ikPAMJY8e+aXM+4WRL9hs/8An0g/79ij7DZ/8+kH/fsVYopcz7jsihqdiLrY6xGSReMG4eIY/wCA9ayGtYEco4tlZTgg6tICP0rduZruN1FtZidSOSZgmD6ciqLXcpYltMtCe5Nymf5UIDP+z23raf8Ag3ko+z23raf+DeSr/wBqk/6Bdn/4Ex/4UfapP+gXZ/8AgTH/AIUwKH2e29bT/wAG8lX7DTAs6TPDtVfmRkvZJAT24OARR9qk/wCgXZ/+BMf+FWre5vXZAdPRIjxvW4VgB9AOaQF6iiikMbIHMbCJlV8fKWGQD9KzDpcxOSNMJP8A05f/AGVTahZXd1KjW2pzWiquCqIGDH15qp/ZGp/9DDdf9+UpiJf7Lm9NM/8AAL/7Kj+y5vTTP/AL/wCyqL+yNT/6GG6/78pR/ZGp/wDQw3X/AH5SgCX+y5vTTP8AwC/+yq9aRSwxeXK0JAPyiKPYAPpk1mf2Rqf/AEMN1/35SpbfTNQiuI5JdcuJkVstG0SgMPSgDVooopDCiiigAooooAKKKKACiiigD//Z",
+      "recordedAt": "2026-06-08T22:36:04Z",
+      "recordedBy": "user_owen",
+      "recordedByName": "Owen O'Neill",
+      "vendor": "M&P Direct"
+    }
+  ],
+  "ytdPence": 18400
+}

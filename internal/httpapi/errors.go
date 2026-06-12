@@ -35,12 +35,12 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 func writeEngineError(w http.ResponseWriter, err error) {
 	switch {
 	// Auth
-	case errors.Is(err, auth.ErrInvalidCredentials):
-		writeError(w, http.StatusUnauthorized, "invalid_credentials", err.Error())
 	case errors.Is(err, auth.ErrAccountDisabled):
 		writeError(w, http.StatusForbidden, "account_disabled", err.Error())
 	case errors.Is(err, auth.ErrSessionInvalid):
 		writeError(w, http.StatusUnauthorized, "session_invalid", err.Error())
+	case errors.Is(err, auth.ErrProfileMissing):
+		writeError(w, http.StatusUnauthorized, "no_profile", err.Error())
 
 	// Booking — distinguish "user error" (4xx) from "not allowed in this state" (409).
 	case errors.Is(err, booking.ErrSessionNotFound),
@@ -71,6 +71,9 @@ func writeEngineError(w http.ResponseWriter, err error) {
 
 	case errors.Is(err, booking.ErrInstructorUnqualified):
 		writeError(w, http.StatusConflict, "instructor_unqualified", err.Error())
+
+	case errors.Is(err, booking.ErrNoInstructorAssigned):
+		writeError(w, http.StatusConflict, "no_instructor_assigned", err.Error())
 
 	// Expenses
 	case errors.Is(err, expenses.ErrNotFound):

@@ -2,9 +2,11 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
+	"github.com/michaeljohnwatters/kickstand/internal/audit"
 	"github.com/michaeljohnwatters/kickstand/internal/booking"
 	"github.com/michaeljohnwatters/kickstand/internal/domain"
 	"github.com/michaeljohnwatters/kickstand/internal/tenant"
@@ -229,6 +231,10 @@ func (s *Server) handleCreateBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Describe(r.Context(),
+		"Booked %s",
+		sessionDisplayName(r.Context(), s.DB, id.SchoolID,
+			domain.SessionID(req.SessionID)))
 	resp := createBookingResponse{Booking: toBookingView(res.Booking)}
 	for _, a := range res.Advisories {
 		resp.Advisories = append(resp.Advisories, advisoryView{Code: a.Code, Message: a.Message})
@@ -299,9 +305,95 @@ func (s *Server) handleCancelBooking(w http.ResponseWriter, r *http.Request) {
 		writeEngineError(w, err)
 		return
 	}
+	sessionLabel := sessionDisplayName(r.Context(), s.DB, id.SchoolID, res.Booking.SessionID)
+	if req.Reason != "" {
+		audit.Describe(r.Context(), "Cancelled booking on %s (reason: %s)",
+			sessionLabel, req.Reason)
+	} else {
+		audit.Describe(r.Context(), "Cancelled booking on %s", sessionLabel)
+	}
 	writeJSON(w, http.StatusOK, cancelBookingResponse{
 		Booking: toBookingView(res.Booking),
 		Late:    res.Late,
+	})
+}
+
+// ----- Bulk session cancel -----
+
+type cancelSessionsBatchRequest struct {
+	SessionIDs []string `json:"sessionIds"`
+	Reason     string   `json:"reason"`
+}
+
+type cancelSessionsBatchResult struct {
+	SessionID         string `json:"sessionId"`
+	BookingsCancelled int    `json:"bookingsCancelled"`
+	WaitlistDropped   int    `json:"waitlistDropped"`
+	Error             string `json:"error,omitempty"`
+}
+
+// POST /sessions/cancel-batch — admin/owner cancels one or more
+// sessions in one call. Each session is its own transaction so a
+// failure on one doesn't roll back the rest; the per-session result
+// surfaces the outcome.
+//
+// Per session:
+//   - Every booked / needs-reassignment booking is cancelled by 'school'
+//     with the shared reason; auto-charges void; cancel notifications
+//     fire for each affected student.
+//   - The waitlist is dropped (no point queuing for a dead session).
+//   - The session is marked cancelled.
+func (s *Server) handleCancelSessionsBatch(w http.ResponseWriter, r *http.Request) {
+	id, _ := identityFromContext(r.Context())
+	if !requireAdminOwner(w, id) {
+		return
+	}
+	scope := tenant.NewScope(s.DB, id.SchoolID)
+	var req cancelSessionsBatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_json", err.Error())
+		return
+	}
+	if len(req.SessionIDs) == 0 {
+		writeError(w, http.StatusBadRequest, "missing_field",
+			"sessionIds must include at least one session")
+		return
+	}
+
+	results := make([]cancelSessionsBatchResult, 0, len(req.SessionIDs))
+	var totalSessions, totalBookings int
+	for _, sid := range req.SessionIDs {
+		res, err := booking.CancelSession(r.Context(), scope,
+			domain.SessionID(sid), req.Reason)
+		row := cancelSessionsBatchResult{SessionID: sid}
+		switch {
+		case err == nil:
+			row.BookingsCancelled = res.BookingsCancelled
+			row.WaitlistDropped = res.WaitlistDropped
+			totalSessions++
+			totalBookings += res.BookingsCancelled
+		case errors.Is(err, booking.ErrSessionNotFound):
+			row.Error = "not_found"
+		default:
+			row.Error = err.Error()
+		}
+		results = append(results, row)
+	}
+	if req.Reason == "" {
+		audit.Describe(r.Context(),
+			"Cancelled %d session%s — %d booking%s affected",
+			totalSessions, plural(totalSessions),
+			totalBookings, plural(totalBookings))
+	} else {
+		audit.Describe(r.Context(),
+			"Cancelled %d session%s (reason: %s) — %d booking%s affected",
+			totalSessions, plural(totalSessions), req.Reason,
+			totalBookings, plural(totalBookings))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"results":            results,
+		"sessionsCancelled":  totalSessions,
+		"bookingsCancelled":  totalBookings,
 	})
 }
 
@@ -407,4 +499,51 @@ func (s *Server) handleSuitableBikes(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"bikes": rows})
+}
+
+// POST /bookings/{id}/assign-bike — standalone bike swap for the
+// master calendar's edit sheet. Reuses the same engine validation as
+// the disruption-resolve flow (`findSuitableFreeBikes`) but without
+// the disruption bookkeeping; a manager picking a better bike for a
+// healthy booking just rewrites the bike_id in place. Admin/owner.
+func (s *Server) handleAssignBookingBike(w http.ResponseWriter, r *http.Request) {
+	id, _ := identityFromContext(r.Context())
+	if !requireAdminOwner(w, id) {
+		return
+	}
+	scope := tenant.NewScope(s.DB, id.SchoolID)
+	bookingID := domain.BookingID(r.PathValue("id"))
+	if bookingID == "" {
+		writeError(w, http.StatusBadRequest, "bad_path", "booking id missing")
+		return
+	}
+	var req struct {
+		BikeID string `json:"bikeId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_json", "request body must be valid JSON")
+		return
+	}
+	if req.BikeID == "" {
+		writeError(w, http.StatusBadRequest, "missing_field", "bikeId is required")
+		return
+	}
+	err := booking.AssignBike(r.Context(), scope, booking.AssignBikeRequest{
+		BookingID: bookingID,
+		NewBikeID: domain.BikeID(req.BikeID),
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, booking.ErrBookingNotFound):
+			writeError(w, http.StatusNotFound, "not_found", "booking not found")
+		case errors.Is(err, booking.ErrSwapBikeNotSuitable):
+			writeError(w, http.StatusConflict, "bike_not_suitable",
+				"this bike doesn't fit the session (category, transmission or already in use)")
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		}
+		return
+	}
+	audit.Describe(r.Context(), "Reassigned a booking's bike")
+	w.WriteHeader(http.StatusNoContent)
 }

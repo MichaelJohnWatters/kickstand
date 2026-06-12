@@ -35,17 +35,19 @@ func (s *Server) handleCalendar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := calendar.Query{
-		From:         from,
-		To:           to,
-		InstructorID: domain.UserID(r.URL.Query().Get("instructorId")),
-		LocationID:   domain.LocationID(r.URL.Query().Get("locationId")),
-		CourseTypeID: domain.CourseTypeID(r.URL.Query().Get("courseTypeId")),
+		From:             from,
+		To:               to,
+		InstructorID:     domain.UserID(r.URL.Query().Get("instructorId")),
+		LocationID:       domain.LocationID(r.URL.Query().Get("locationId")),
+		CourseTypeID:     domain.CourseTypeID(r.URL.Query().Get("courseTypeId")),
+		IncludeCancelled: r.URL.Query().Get("includeCancelled") == "true",
 	}
 
-	// Instructors only see their own sessions in the master calendar.
-	if id.Role == domain.RoleInstructor {
-		q.InstructorID = id.UserID
-	}
+	// Instructors no longer get implicitly scoped to themselves —
+	// the Mine/All toggle on the schedule screen now drives the
+	// `instructorId` query param explicitly. (Tenant scope still
+	// keeps cross-school traffic out.)
+	_ = id // reserved for future per-role checks
 
 	payload, err := calendar.Build(r.Context(), scope, q)
 	if err != nil {
@@ -55,6 +57,25 @@ func (s *Server) handleCalendar(w http.ResponseWriter, r *http.Request) {
 
 	sessions := make([]map[string]any, 0, len(payload.Sessions))
 	for _, sr := range payload.Sessions {
+		instructors := make([]map[string]any, 0, len(sr.Instructors))
+		for _, ii := range sr.Instructors {
+			instructors = append(instructors, map[string]any{
+				"id":        ii.ID,
+				"name":      ii.Name,
+				"isPrimary": ii.IsPrimary,
+			})
+		}
+		students := make([]map[string]any, 0, len(sr.Students))
+		for _, st := range sr.Students {
+			students = append(students, map[string]any{
+				"id":           st.ID,
+				"name":         st.Name,
+				"status":       st.Status,
+				"bookingId":    st.BookingID,
+				"bikeId":       st.BikeID,
+				"bikeNickname": st.BikeNickname,
+			})
+		}
 		sessions = append(sessions, map[string]any{
 			"sessionId":          sr.SessionID,
 			"courseTypeId":       sr.CourseTypeID,
@@ -64,12 +85,14 @@ func (s *Server) handleCalendar(w http.ResponseWriter, r *http.Request) {
 			"nonTeaching":        sr.NonTeaching,
 			"instructorId":       sr.InstructorID,
 			"instructorName":     sr.InstructorName,
+			"instructors":        instructors,
 			"locationId":         sr.LocationID,
 			"locationName":       sr.LocationName,
 			"startsAt":           sr.StartsAt.Format(time.RFC3339),
 			"endsAt":             sr.EndsAt.Format(time.RFC3339),
 			"capacity":           sr.Capacity,
 			"activeBookings":     sr.ActiveBookings,
+			"students":           students,
 			"status":             sr.Status,
 		})
 	}

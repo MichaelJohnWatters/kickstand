@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/michaeljohnwatters/kickstand/internal/auth"
 	"github.com/michaeljohnwatters/kickstand/internal/db"
 	"github.com/michaeljohnwatters/kickstand/internal/filestore"
 	"github.com/michaeljohnwatters/kickstand/internal/httpapi"
@@ -50,13 +51,59 @@ func main() {
 		os.Exit(1)
 	}
 
-	files, err := filestore.NewLocal(*uploadsDir)
+	// Receipt storage: prefer Firebase Storage / GCS when configured,
+	// fall back to the local-disk implementation. NewGCS returns
+	// (nil, nil) when no bucket env var is set, so we can pick by the
+	// returned value without a separate "are we configured" probe.
+	var files filestore.Store
+	gcs, err := filestore.NewGCS(rootCtx)
 	if err != nil {
-		log.Error("open uploads dir", slog.String("err", err.Error()))
+		log.Error("filestore: gcs init", slog.String("err", err.Error()))
 		os.Exit(1)
 	}
+	if gcs != nil {
+		files = gcs
+		mode := "production"
+		if os.Getenv("STORAGE_EMULATOR_HOST") != "" || os.Getenv("FIREBASE_STORAGE_EMULATOR_HOST") != "" {
+			mode = "emulator"
+		}
+		log.Info("filestore: firebase storage",
+			slog.String("mode", mode),
+			slog.String("bucket", os.Getenv("FIREBASE_STORAGE_BUCKET")))
+	} else {
+		local, err := filestore.NewLocal(*uploadsDir)
+		if err != nil {
+			log.Error("open uploads dir", slog.String("err", err.Error()))
+			os.Exit(1)
+		}
+		files = local
+		log.Info("filestore: local disk", slog.String("dir", *uploadsDir))
+	}
 
-	srv := httpapi.NewServer(d, files)
+	// Firebase Admin SDK — returns (nil, nil) when no Firebase env vars
+	// are set. The HTTP middleware dispatches by token shape, so when
+	// `fb == nil` only legacy opaque tokens work; a Firebase JWT lands
+	// at 401 because there's nothing to verify it against. Log the mode
+	// once so a sleepy dev can spot misconfig at a glance.
+	fb, err := auth.NewFirebaseClient(rootCtx)
+	if err != nil {
+		log.Error("firebase init", slog.String("err", err.Error()))
+		os.Exit(1)
+	}
+	switch {
+	case fb == nil:
+		log.Info("auth: legacy session-token mode only",
+			slog.String("hint", "set FIREBASE_AUTH_EMULATOR_HOST or GOOGLE_APPLICATION_CREDENTIALS to enable Firebase JWT verification"))
+	case os.Getenv("FIREBASE_AUTH_EMULATOR_HOST") != "":
+		log.Info("auth: firebase enabled (emulator)",
+			slog.String("emulator", os.Getenv("FIREBASE_AUTH_EMULATOR_HOST")),
+			slog.String("project", os.Getenv("FIREBASE_PROJECT_ID")))
+	default:
+		log.Info("auth: firebase enabled (production credentials)",
+			slog.String("project", os.Getenv("FIREBASE_PROJECT_ID")))
+	}
+
+	srv := httpapi.NewServer(d, files, fb)
 	httpSrv := &http.Server{
 		Addr:              *addr,
 		Handler:           srv.Routes(),

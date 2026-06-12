@@ -4,14 +4,15 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"strings"
 	"time"
 
+	"github.com/michaeljohnwatters/kickstand/internal/audit"
 	"github.com/michaeljohnwatters/kickstand/internal/auth"
-	"github.com/michaeljohnwatters/kickstand/internal/domain"
 	"github.com/michaeljohnwatters/kickstand/internal/logging"
 )
 
@@ -45,17 +46,27 @@ func requestStateFrom(ctx context.Context) *requestState {
 	return s
 }
 
-// authMiddleware enforces a valid Bearer token on every wrapped route. On
-// success it attaches the resolved Identity to the request context. Handlers
-// then build a tenant.Scope from id.SchoolID — never from request headers.
+// authMiddleware verifies the Bearer token via the Firebase Admin SDK
+// and attaches the resolved Identity to the request context. Handlers
+// then build a tenant.Scope from id.SchoolID — never from request
+// headers.
+//
+// Server construction requires a non-nil Firebase client (see
+// NewServer); if you somehow get here without one, every request 503s
+// rather than silently letting anything through.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.Firebase == nil {
+			writeError(w, http.StatusServiceUnavailable, "firebase_disabled",
+				"Firebase Auth is not configured on this server")
+			return
+		}
 		token, ok := bearerToken(r)
 		if !ok {
 			writeError(w, http.StatusUnauthorized, "missing_token", "Authorization header missing or malformed")
 			return
 		}
-		id, err := auth.Authenticate(r.Context(), s.DB, domain.UserSessionToken(token))
+		id, err := s.Firebase.VerifyAndLoad(r.Context(), s.DB, token)
 		if err != nil {
 			writeEngineError(w, err)
 			return
@@ -90,7 +101,7 @@ func bearerToken(r *http.Request) (string, bool) {
 // The per-request logger is also attached to r.Context() so downstream
 // packages can `logging.FromContext(ctx).Info(...)` with the same rid +
 // identity fields without re-deriving them.
-func withLog(next http.Handler) http.Handler {
+func (s *Server) withLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		rid := newRequestID()
@@ -107,8 +118,18 @@ func withLog(next http.Handler) http.Handler {
 		state := &requestState{}
 		ctx := context.WithValue(r.Context(), requestStateKey{}, state)
 		ctx = logging.WithLogger(ctx, reqLogger)
+		// Seed an empty audit bag for handlers to enrich via
+		// audit.Describe(ctx, …). The read at the end picks up whatever
+		// was set (or "" if no handler bothered, in which case the
+		// client falls back to its verb-mapping).
+		ctx = audit.WithRequest(ctx)
 		sw := &statusRecorder{ResponseWriter: w, status: 200}
-		next.ServeHTTP(sw, r.WithContext(ctx))
+		// Keep a handle on the request struct the mux actually dispatches
+		// against — `r.WithContext` returns a shallow copy, and the mux
+		// writes the matched pattern into THAT struct. Reading
+		// `r.Pattern` on the outer request would always see "".
+		inner := r.WithContext(ctx)
+		next.ServeHTTP(sw, inner)
 
 		attrs := []any{
 			slog.Int("status", sw.status),
@@ -126,7 +147,78 @@ func withLog(next http.Handler) http.Handler {
 			)
 		}
 		reqLogger.LogAttrs(r.Context(), levelFor(sw.status), "request", toAttrs(attrs)...)
+
+		// Audit log — mutating requests only, after the handler returns.
+		// School scope comes from the resolved identity, so unauthenticated
+		// mutations (which 401 before reaching a handler) are not recorded
+		// here; they're already covered by the structured request log
+		// above. Best-effort: a failed insert must not affect the caller.
+		if isAuditableMethod(r.Method) && state.identity != nil && inner.Pattern != "" {
+			id := state.identity
+			entity, targetID := auditTargetFrom(inner)
+			entry := audit.Entry{
+				At:           started.UTC().Format(time.RFC3339),
+				SchoolID:     id.SchoolID,
+				ActorUserID:  id.UserID,
+				ActorRole:    string(id.Role),
+				ActorName:    id.Name,
+				Method:       r.Method,
+				PathPattern:  auditPathPattern(inner.Pattern),
+				TargetEntity: entity,
+				TargetID:     targetID,
+				StatusCode:   sw.status,
+				ErrorCode:    sw.errorCode(),
+				Summary:      audit.SummaryFrom(inner.Context()),
+			}
+			if err := audit.Write(r.Context(), s.DB, entry); err != nil {
+				reqLogger.LogAttrs(r.Context(), slog.LevelWarn, "audit write failed",
+					slog.String("err", err.Error()))
+			}
+		}
 	})
+}
+
+func isAuditableMethod(m string) bool {
+	switch m {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	}
+	return false
+}
+
+// auditPathPattern strips the leading method from r.Pattern. Go's mux
+// stores the matched pattern as e.g. "POST /bikes/{id}/restore"; the
+// audit row only needs the path portion.
+func auditPathPattern(pattern string) string {
+	if i := strings.Index(pattern, " "); i >= 0 {
+		return pattern[i+1:]
+	}
+	return pattern
+}
+
+// auditTargetFrom derives (entity, id) from the request. Entity is the
+// first non-empty path segment ("bikes" for /bikes/{id}/restore). ID is
+// the value of the first path parameter in the pattern. Both are
+// best-effort — empty when not derivable.
+func auditTargetFrom(r *http.Request) (entity, id string) {
+	path := strings.TrimPrefix(r.URL.Path, "/")
+	if i := strings.Index(path, "/"); i >= 0 {
+		entity = path[:i]
+	} else {
+		entity = path
+	}
+	// First {name} in the pattern → that path value.
+	pat := auditPathPattern(r.Pattern)
+	if open := strings.Index(pat, "{"); open >= 0 {
+		if close := strings.Index(pat[open:], "}"); close > 0 {
+			name := pat[open+1 : open+close]
+			// Path params may be declared `{name...}` for wildcard; strip
+			// the suffix so PathValue resolves.
+			name = strings.TrimSuffix(name, "...")
+			id = r.PathValue(name)
+		}
+	}
+	return entity, id
 }
 
 // levelFor maps the response status to a slog level so 5xx jumps out in a
@@ -201,6 +293,12 @@ type statusRecorder struct {
 	http.ResponseWriter
 	status int
 	bytes  int
+	// bodyHead buffers the first slice of the response body so the
+	// audit middleware can lift `error_code` out of error envelopes
+	// ({"error":"...","message":"..."}). Capped — the envelope is tiny
+	// and we don't want to mirror full success payloads in memory.
+	bodyHead [512]byte
+	bodyN    int
 }
 
 func (s *statusRecorder) WriteHeader(code int) {
@@ -211,7 +309,31 @@ func (s *statusRecorder) WriteHeader(code int) {
 func (s *statusRecorder) Write(b []byte) (int, error) {
 	n, err := s.ResponseWriter.Write(b)
 	s.bytes += n
+	if s.bodyN < len(s.bodyHead) {
+		room := len(s.bodyHead) - s.bodyN
+		if len(b) < room {
+			room = len(b)
+		}
+		copy(s.bodyHead[s.bodyN:], b[:room])
+		s.bodyN += room
+	}
 	return n, err
+}
+
+// errorCode returns the `error` field from the JSON body when the
+// response is a 4xx/5xx; empty otherwise. Cheap best-effort parse —
+// non-JSON bodies (or unparseable ones) just yield "".
+func (s *statusRecorder) errorCode() string {
+	if s.status < 400 || s.bodyN == 0 {
+		return ""
+	}
+	var env struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(s.bodyHead[:s.bodyN], &env); err != nil {
+		return ""
+	}
+	return env.Error
 }
 
 func newRequestID() string {

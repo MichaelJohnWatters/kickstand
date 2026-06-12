@@ -1,11 +1,18 @@
 package httpapi
 
 import (
+	"context"
+	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
+
+	firebaseauth "firebase.google.com/go/v4/auth"
 
 	"github.com/michaeljohnwatters/kickstand/internal/admin"
+	"github.com/michaeljohnwatters/kickstand/internal/audit"
 	"github.com/michaeljohnwatters/kickstand/internal/auth"
 	"github.com/michaeljohnwatters/kickstand/internal/domain"
 	"github.com/michaeljohnwatters/kickstand/internal/tenant"
@@ -47,13 +54,19 @@ func (s *Server) handleListLocations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Explicit camelCase keys for consistency with the rest of the API.
+	// `image` is base64'd inline so the cards paint without a separate
+	// fetch per row (locations are a small set, ~3-10 per tenant).
 	rows := make([]map[string]any, 0, len(out))
 	for _, l := range out {
-		rows = append(rows, map[string]any{
+		row := map[string]any{
 			"id":      l.ID,
 			"name":    l.Name,
 			"address": l.Address,
-		})
+		}
+		if len(l.Image) > 0 {
+			row["image"] = base64.StdEncoding.EncodeToString(l.Image)
+		}
+		rows = append(rows, row)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"locations": rows})
 }
@@ -207,6 +220,9 @@ func bikeRowView(b admin.BikeRow) map[string]any {
 		"currentLocationId":   b.CurrentLocationID,
 		"currentLocationName": b.CurrentLocationName,
 		"isCrossSite":         b.IsCrossSite,
+		"motExpiresOn":        b.MOTExpiresOn,
+		"taxExpiresOn":        b.TaxExpiresOn,
+		"currentMileageMiles": b.CurrentMileageMiles,
 	}
 }
 
@@ -244,6 +260,14 @@ func (s *Server) handleCreateBike(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, err)
 		return
 	}
+	label := b.Nickname
+	if label == "" {
+		label = strings.TrimSpace(b.Make + " " + b.Model)
+	}
+	if label == "" {
+		label = string(b.ID)
+	}
+	audit.Describe(r.Context(), "Added bike %s (%s)", label, b.Category)
 	writeJSON(w, http.StatusCreated, bikeRowView(*b))
 }
 
@@ -253,13 +277,17 @@ func (s *Server) handleUpdateBike(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := tenant.NewScope(s.DB, id.SchoolID)
+	// Pointer types for MOT/tax so a missing key means "leave unchanged"
+	// while an empty string explicitly clears the value.
 	var req struct {
-		Nickname       string `json:"nickname"`
-		Make           string `json:"make"`
-		Model          string `json:"model"`
-		Registration   string `json:"registration"`
-		EngineCC       int    `json:"engineCc"`
-		HomeLocationID string `json:"homeLocationId"`
+		Nickname       string  `json:"nickname"`
+		Make           string  `json:"make"`
+		Model          string  `json:"model"`
+		Registration   string  `json:"registration"`
+		EngineCC       int     `json:"engineCc"`
+		HomeLocationID string  `json:"homeLocationId"`
+		MOTExpiresOn   *string `json:"motExpiresOn"`
+		TaxExpiresOn   *string `json:"taxExpiresOn"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_json", err.Error())
@@ -272,7 +300,43 @@ func (s *Server) handleUpdateBike(w http.ResponseWriter, r *http.Request) {
 		Registration:   req.Registration,
 		EngineCC:       req.EngineCC,
 		HomeLocationID: domain.LocationID(req.HomeLocationID),
+		MOTExpiresOn:   req.MOTExpiresOn,
+		TaxExpiresOn:   req.TaxExpiresOn,
 	}); err != nil {
+		writeAdminError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /bikes/{id}/mileage — record a new mileage reading. Body:
+//
+//	{ "miles": 12840, "source": "manual" | "mot" | "service" | "incident" }
+//
+// Updates the snapshot column on the bike row and appends to
+// bike_mileage_log atomically.
+func (s *Server) handleRecordBikeMileage(w http.ResponseWriter, r *http.Request) {
+	id, _ := identityFromContext(r.Context())
+	if id.Role == domain.RoleStudent {
+		writeError(w, http.StatusForbidden, "forbidden", "staff only")
+		return
+	}
+	scope := tenant.NewScope(s.DB, id.SchoolID)
+	var req struct {
+		Miles  int    `json:"miles"`
+		Source string `json:"source"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_json", err.Error())
+		return
+	}
+	if err := admin.RecordMileage(r.Context(), scope,
+		domain.BikeID(r.PathValue("id")),
+		admin.RecordMileageRequest{
+			Miles:      req.Miles,
+			Source:     req.Source,
+			RecordedBy: id.UserID,
+		}); err != nil {
 		writeAdminError(w, err)
 		return
 	}
@@ -293,13 +357,29 @@ func (s *Server) handleMoveBike(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_json", err.Error())
 		return
 	}
-	if err := admin.MoveBike(r.Context(), scope,
-		domain.BikeID(r.PathValue("id")),
+	bikeID := domain.BikeID(r.PathValue("id"))
+	bikeLabel := bikeDisplayName(r.Context(), s.DB, id.SchoolID, bikeID)
+	locName := locationDisplayName(r.Context(), s.DB, id.SchoolID, domain.LocationID(req.LocationId))
+	if err := admin.MoveBike(r.Context(), scope, bikeID,
 		domain.LocationID(req.LocationId)); err != nil {
 		writeAdminError(w, err)
 		return
 	}
+	audit.Describe(r.Context(), "Moved %s to %s", bikeLabel, locName)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// locationDisplayName fetches a location's name for human audit
+// summaries. Falls back to the ID on miss.
+func locationDisplayName(ctx context.Context, db *sql.DB, schoolID domain.SchoolID, locID domain.LocationID) string {
+	var name string
+	if err := db.QueryRowContext(ctx,
+		`SELECT name FROM locations WHERE id = ? AND school_id = ?`,
+		string(locID), string(schoolID),
+	).Scan(&name); err != nil {
+		return string(locID)
+	}
+	return name
 }
 
 func (s *Server) handleRestoreBike(w http.ResponseWriter, r *http.Request) {
@@ -309,10 +389,13 @@ func (s *Server) handleRestoreBike(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := tenant.NewScope(s.DB, id.SchoolID)
-	if err := admin.RestoreBike(r.Context(), scope, domain.BikeID(r.PathValue("id"))); err != nil {
+	bikeID := domain.BikeID(r.PathValue("id"))
+	bikeLabel := bikeDisplayName(r.Context(), s.DB, id.SchoolID, bikeID)
+	if err := admin.RestoreBike(r.Context(), scope, bikeID); err != nil {
 		writeAdminError(w, err)
 		return
 	}
+	audit.Describe(r.Context(), "Restored %s to service", bikeLabel)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -509,15 +592,22 @@ func (s *Server) handleDeleteCompetency(w http.ResponseWriter, r *http.Request) 
 // ----- Instructors -----
 
 func instructorView(i admin.InstructorRow) map[string]any {
+	accs := make([]map[string]any, 0, len(i.Accreditations))
+	for _, a := range i.Accreditations {
+		accs = append(accs, map[string]any{
+			"courseTypeId": a.CourseTypeID,
+			"expiresOn":    a.ExpiresOn,
+		})
+	}
 	return map[string]any{
-		"userId":             i.UserID,
-		"name":               i.Name,
-		"email":              i.Email,
-		"phone":              i.Phone,
-		"homeLocationId":     i.HomeLocationID,
-		"homeLocationName":   i.HomeLocationName,
-		"accountStatus":      i.AccountStatus,
-		"qualifiedCourseIds": i.QualifiedCourseIDs,
+		"userId":           i.UserID,
+		"name":             i.Name,
+		"email":            i.Email,
+		"phone":            i.Phone,
+		"homeLocationId":   i.HomeLocationID,
+		"homeLocationName": i.HomeLocationName,
+		"accountStatus":    i.AccountStatus,
+		"accreditations":   accs,
 	}
 }
 
@@ -541,58 +631,194 @@ func (s *Server) handleInviteInstructor(w http.ResponseWriter, r *http.Request) 
 	if !requireAdminOwner(w, id) {
 		return
 	}
+	if s.Firebase == nil {
+		writeError(w, http.StatusServiceUnavailable, "firebase_disabled",
+			"Firebase Auth is not configured on this server")
+		return
+	}
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	var req struct {
-		Name               string   `json:"name"`
-		Email              string   `json:"email"`
-		Phone              string   `json:"phone"`
-		Password           string   `json:"password"`
-		HomeLocationID     string   `json:"homeLocationId"`
-		QualifiedCourseIDs []string `json:"qualifiedCourseIds"`
+		Name           string `json:"name"`
+		Email          string `json:"email"`
+		Phone          string `json:"phone"`
+		Password       string `json:"password"`
+		HomeLocationID string `json:"homeLocationId"`
+		Accreditations []struct {
+			CourseTypeID string `json:"courseTypeId"`
+			ExpiresOn    string `json:"expiresOn"`
+		} `json:"accreditations"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_json", err.Error())
 		return
 	}
-	courses := make([]domain.CourseTypeID, 0, len(req.QualifiedCourseIDs))
-	for _, c := range req.QualifiedCourseIDs {
-		courses = append(courses, domain.CourseTypeID(c))
+	if len(req.Password) < 6 {
+		// Firebase enforces ≥6; we surface a 400 early to avoid the
+		// Firebase create call when we know it'll fail.
+		writeError(w, http.StatusBadRequest, "invalid_input",
+			"password must be at least 6 characters")
+		return
+	}
+
+	// Pin the Firebase UID to the local user_id so the firebase_uid
+	// column doubles as the join key.
+	userID := domain.UserID(domain.NewID())
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	fbUser, err := s.Firebase.Auth.CreateUser(r.Context(), (&firebaseauth.UserToCreate{}).
+		UID(string(userID)).
+		Email(email).
+		Password(req.Password).
+		DisplayName(req.Name))
+	if err != nil {
+		// Most common failure: email already exists in Firebase. Surface
+		// as 409 so the admin sees a clean message.
+		if firebaseauth.IsEmailAlreadyExists(err) || firebaseauth.IsUIDAlreadyExists(err) {
+			writeError(w, http.StatusConflict, "email_in_use", "email already in use")
+			return
+		}
+		writeError(w, http.StatusBadGateway, "firebase_error", "could not create auth identity")
+		return
+	}
+
+	accs := make([]admin.Accreditation, 0, len(req.Accreditations))
+	for _, a := range req.Accreditations {
+		if a.CourseTypeID == "" {
+			continue
+		}
+		accs = append(accs, admin.Accreditation{
+			CourseTypeID: domain.CourseTypeID(a.CourseTypeID),
+			ExpiresOn:    a.ExpiresOn,
+		})
 	}
 	i, err := admin.InviteInstructor(r.Context(), scope, admin.InviteInstructorRequest{
-		Name:               req.Name,
-		Email:              req.Email,
-		Phone:              req.Phone,
-		Password:           req.Password,
-		HomeLocationID:     domain.LocationID(req.HomeLocationID),
-		QualifiedCourseIDs: courses,
+		UserID:         userID,
+		FirebaseUID:    fbUser.UID,
+		Name:           req.Name,
+		Email:          email,
+		Phone:          req.Phone,
+		HomeLocationID: domain.LocationID(req.HomeLocationID),
+		Accreditations: accs,
 	})
 	if err != nil {
+		// Roll back the Firebase user so the email stays available.
+		_ = s.Firebase.Auth.DeleteUser(r.Context(), fbUser.UID)
 		writeAdminError(w, err)
 		return
 	}
+	audit.Describe(r.Context(), "Invited instructor %s", req.Name)
 	writeJSON(w, http.StatusCreated, instructorView(*i))
 }
 
-func (s *Server) handleSetQualifications(w http.ResponseWriter, r *http.Request) {
+// POST /students — admin/owner manually adds a student (the alternative
+// to self-signup). Mirrors handleInviteInstructor: create the Firebase
+// identity first, write the local rows, and roll back the Firebase user
+// if the local write fails so the email stays available for retry.
+func (s *Server) handleCreateStudent(w http.ResponseWriter, r *http.Request) {
+	id, _ := identityFromContext(r.Context())
+	if !requireAdminOwner(w, id) {
+		return
+	}
+	if s.Firebase == nil {
+		writeError(w, http.StatusServiceUnavailable, "firebase_disabled",
+			"Firebase Auth is not configured on this server")
+		return
+	}
+	scope := tenant.NewScope(s.DB, id.SchoolID)
+	var req struct {
+		Name     string `json:"name"`
+		Email    string `json:"email"`
+		Phone    string `json:"phone"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_json", err.Error())
+		return
+	}
+	if len(req.Password) < 6 {
+		writeError(w, http.StatusBadRequest, "invalid_input",
+			"password must be at least 6 characters")
+		return
+	}
+
+	userID := domain.UserID(domain.NewID())
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	fbUser, err := s.Firebase.Auth.CreateUser(r.Context(), (&firebaseauth.UserToCreate{}).
+		UID(string(userID)).
+		Email(email).
+		Password(req.Password).
+		DisplayName(req.Name))
+	if err != nil {
+		if firebaseauth.IsEmailAlreadyExists(err) || firebaseauth.IsUIDAlreadyExists(err) {
+			writeError(w, http.StatusConflict, "email_in_use", "email already in use")
+			return
+		}
+		writeError(w, http.StatusBadGateway, "firebase_error", "could not create auth identity")
+		return
+	}
+
+	st, err := admin.CreateStudent(r.Context(), scope, admin.CreateStudentRequest{
+		UserID:      userID,
+		FirebaseUID: fbUser.UID,
+		Name:        req.Name,
+		Email:       email,
+		Phone:       req.Phone,
+	})
+	if err != nil {
+		_ = s.Firebase.Auth.DeleteUser(r.Context(), fbUser.UID)
+		writeAdminError(w, err)
+		return
+	}
+	audit.Describe(r.Context(), "Added student %s", st.Name)
+	// Response shape matches one row of GET /students so the Flutter
+	// client can append optimistically. Derived fields (balance,
+	// completed bookings, safety flags) all start at zero for a fresh
+	// student.
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id":                     st.UserID,
+		"name":                   st.Name,
+		"email":                  st.Email,
+		"phone":                  st.Phone,
+		"accountStatus":          st.AccountStatus,
+		"licenceCategoryPursued": "",
+		"transmissionPreference": "",
+		"stage":                  "Pre-CBT",
+		"balancePence":           0,
+		"completedBookings":      0,
+		"safetyFlagCount":        0,
+		"hasSafetyFlag":          false,
+		"passed":                 false,
+	})
+}
+
+func (s *Server) handleSetAccreditations(w http.ResponseWriter, r *http.Request) {
 	id, _ := identityFromContext(r.Context())
 	if !requireAdminOwner(w, id) {
 		return
 	}
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	var req struct {
-		CourseTypeIDs []string `json:"courseTypeIds"`
+		Accreditations []struct {
+			CourseTypeID string `json:"courseTypeId"`
+			ExpiresOn    string `json:"expiresOn"`
+		} `json:"accreditations"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_json", err.Error())
 		return
 	}
-	courses := make([]domain.CourseTypeID, 0, len(req.CourseTypeIDs))
-	for _, c := range req.CourseTypeIDs {
-		courses = append(courses, domain.CourseTypeID(c))
+	accs := make([]admin.Accreditation, 0, len(req.Accreditations))
+	for _, a := range req.Accreditations {
+		if a.CourseTypeID == "" {
+			continue
+		}
+		accs = append(accs, admin.Accreditation{
+			CourseTypeID: domain.CourseTypeID(a.CourseTypeID),
+			ExpiresOn:    a.ExpiresOn,
+		})
 	}
-	if err := admin.SetQualifications(r.Context(), scope,
+	if err := admin.SetAccreditations(r.Context(), scope,
 		domain.UserID(r.PathValue("id")),
-		admin.SetQualificationsRequest{CourseTypeIDs: courses}); err != nil {
+		admin.SetAccreditationsRequest{Accreditations: accs}); err != nil {
 		writeAdminError(w, err)
 		return
 	}
@@ -618,6 +844,14 @@ func (s *Server) handleGetSchoolSettings(w http.ResponseWriter, r *http.Request)
 		"cancelCutoffHours":            settings.CancelCutoffHours,
 		"travelBufferMinutes":          settings.TravelBufferMinutes,
 		"crossSiteNoticeHours":         settings.CrossSiteNoticeHours,
+		"motWarnDays":                  settings.MOTWarnDays,
+		"motUrgentDays":                settings.MOTUrgentDays,
+		"taxWarnDays":                  settings.TaxWarnDays,
+		"taxUrgentDays":                settings.TaxUrgentDays,
+		"accreditationWarnDays":        settings.AccreditationWarnDays,
+		"accreditationUrgentDays":      settings.AccreditationUrgentDays,
+		"insuranceWarnDays":            settings.InsuranceWarnDays,
+		"insuranceUrgentDays":          settings.InsuranceUrgentDays,
 	})
 }
 
@@ -637,5 +871,52 @@ func (s *Server) handleUpdateSchoolSettings(w http.ResponseWriter, r *http.Reque
 		writeAdminError(w, err)
 		return
 	}
+	audit.Describe(r.Context(), "Updated school settings (%s)",
+		schoolSettingsFieldsTouched(req))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// schoolSettingsFieldsTouched lists the human names of the non-nil
+// fields in a settings patch so the audit summary tells you WHAT was
+// changed, not just THAT something was. Order matches the settings
+// page UI so the sentence reads naturally to the owner.
+func schoolSettingsFieldsTouched(r admin.UpdateSchoolSettingsRequest) string {
+	parts := []string{}
+	if r.Name != nil {
+		parts = append(parts, "name")
+	}
+	if r.OnboardingMode != nil {
+		parts = append(parts, "onboarding mode")
+	}
+	if r.InstructorsCanRecordPayments != nil {
+		parts = append(parts, "instructor payments toggle")
+	}
+	if r.CancelCutoffHours != nil {
+		parts = append(parts, "cancel cutoff")
+	}
+	if r.TravelBufferMinutes != nil {
+		parts = append(parts, "travel buffer")
+	}
+	if r.CrossSiteNoticeHours != nil {
+		parts = append(parts, "cross-site notice")
+	}
+	if r.TestBodyLabel != nil {
+		parts = append(parts, "test body label")
+	}
+	if r.MOTWarnDays != nil || r.MOTUrgentDays != nil {
+		parts = append(parts, "MOT thresholds")
+	}
+	if r.TaxWarnDays != nil || r.TaxUrgentDays != nil {
+		parts = append(parts, "tax thresholds")
+	}
+	if r.AccreditationWarnDays != nil || r.AccreditationUrgentDays != nil {
+		parts = append(parts, "accreditation thresholds")
+	}
+	if r.InsuranceWarnDays != nil || r.InsuranceUrgentDays != nil {
+		parts = append(parts, "insurance thresholds")
+	}
+	if len(parts) == 0 {
+		return "no changes"
+	}
+	return strings.Join(parts, ", ")
 }

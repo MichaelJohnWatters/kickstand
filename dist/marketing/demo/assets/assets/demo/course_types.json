@@ -1,0 +1,105 @@
+{
+  "courseTypes": [
+    {
+      "accentColour": "#6366F1",
+      "cancellationCutoffHours": 0,
+      "code": "CBT-125",
+      "durationMinutes": 240,
+      "icon": "",
+      "id": "ct_cbt_125",
+      "maxRatio": 4,
+      "name": "CBT 125",
+      "nonTeaching": false,
+      "prerequisites": null,
+      "pricePence": 13000,
+      "region": "NI",
+      "requiredBikeCategory": "A1"
+    },
+    {
+      "accentColour": "#9333EA",
+      "cancellationCutoffHours": 0,
+      "code": "CBT-650",
+      "durationMinutes": 240,
+      "icon": "",
+      "id": "ct_cbt_650",
+      "maxRatio": 4,
+      "name": "CBT 650",
+      "nonTeaching": false,
+      "prerequisites": null,
+      "pricePence": 15000,
+      "region": "NI",
+      "requiredBikeCategory": "A2"
+    },
+    {
+      "accentColour": "#0EA5E9",
+      "cancellationCutoffHours": 0,
+      "code": "PRAC-MOD1",
+      "durationMinutes": 120,
+      "icon": "",
+      "id": "ct_prac_mod1",
+      "maxRatio": 1,
+      "name": "Practice MOD 1",
+      "nonTeaching": false,
+      "prerequisites": [
+        "cbt_held"
+      ],
+      "pricePence": 9000,
+      "region": "NI",
+      "requiredBikeCategory": "A2"
+    },
+    {
+      "accentColour": "#1F9D6B",
+      "cancellationCutoffHours": 0,
+      "code": "PRAC-MOD2",
+      "durationMinutes": 120,
+      "icon": "",
+      "id": "ct_prac_mod2",
+      "maxRatio": 1,
+      "name": "Practice MOD 2",
+      "nonTeaching": false,
+      "prerequisites": [
+        "cbt_held",
+        "theory_passed"
+      ],
+      "pricePence": 9000,
+      "region": "NI",
+      "requiredBikeCategory": "A2"
+    },
+    {
+      "accentColour": "#F59E0B",
+      "cancellationCutoffHours": 0,
+      "code": "TEST-MOD1",
+      "durationMinutes": 90,
+      "icon": "",
+      "id": "ct_test_mod1",
+      "maxRatio": 1,
+      "name": "Test MOD 1",
+      "nonTeaching": true,
+      "prerequisites": [
+        "cbt_held",
+        "theory_passed"
+      ],
+      "pricePence": 6000,
+      "region": "NI",
+      "requiredBikeCategory": "A2"
+    },
+    {
+      "accentColour": "#C98A1E",
+      "cancellationCutoffHours": 0,
+      "code": "TEST-MOD2",
+      "durationMinutes": 90,
+      "icon": "",
+      "id": "ct_test_mod2",
+      "maxRatio": 1,
+      "name": "Test MOD 2",
+      "nonTeaching": true,
+      "prerequisites": [
+        "cbt_held",
+        "theory_passed"
+      ],
+      "pricePence": 6000,
+      "region": "NI",
+      "requiredBikeCategory": "A2"
+    }
+  ]
+}

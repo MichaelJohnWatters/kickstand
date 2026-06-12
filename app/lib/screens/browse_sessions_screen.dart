@@ -435,7 +435,34 @@ class _StepSlots extends ConsumerWidget {
             const SizedBox(height: 12),
             if (filtered.isEmpty) const _Empty('No slots match — try a different site or wait for the next intake.'),
             for (final s in filtered) ...[
-              _SlotCard(s: s, onTap: s.isFull ? null : () => onPick(s)),
+              _SlotCard(
+                s: s,
+                onTap: s.isFull ? null : () => onPick(s),
+                onJoinWaitlist: s.isFull
+                    ? () async {
+                        try {
+                          await ref.read(apiClientProvider)
+                              .joinSessionWaitlist(s.sessionId);
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: const Text(
+                                  'Joined the waitlist — we\'ll book you in if a seat opens.'),
+                              behavior: SnackBarBehavior.floating,
+                            ));
+                          }
+                        } on ApiException catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text(e.code == 'already_on_waitlist'
+                                  ? 'You\'re already on this waitlist.'
+                                  : 'Could not join: ${e.message}'),
+                              backgroundColor: KsColors.danger,
+                            ));
+                          }
+                        }
+                      }
+                    : null,
+              ),
               const SizedBox(height: 10),
             ],
           ],
@@ -449,7 +476,8 @@ class _StepSlots extends ConsumerWidget {
 class _SlotCard extends StatelessWidget {
   final SessionListing s;
   final VoidCallback? onTap;
-  const _SlotCard({required this.s, required this.onTap});
+  final VoidCallback? onJoinWaitlist;
+  const _SlotCard({required this.s, required this.onTap, this.onJoinWaitlist});
 
   @override
   Widget build(BuildContext context) {
@@ -541,6 +569,23 @@ class _SlotCard extends StatelessWidget {
                           fontWeight: FontWeight.w600)),
                 ],
               ),
+              if (full && onJoinWaitlist != null) ...[
+                const SizedBox(height: 10),
+                Opacity(
+                  opacity: 1, // override the parent's faded look for the CTA
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: onJoinWaitlist,
+                      icon: const Icon(Icons.notifications_active_outlined, size: 16),
+                      label: const Text('Join waitlist'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: KsColors.primary,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

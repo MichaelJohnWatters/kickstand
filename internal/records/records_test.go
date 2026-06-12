@@ -78,6 +78,59 @@ func TestLogIncident_BasicHappyPath(t *testing.T) {
 	if inc.ID == "" || inc.TookBikeOffline {
 		t.Errorf("unexpected: %+v", inc)
 	}
+	// Auto-spawned 3 follow-ups, all open.
+	fups, err := records.ListFollowups(context.Background(), f.scope, inc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fups) != 3 {
+		t.Errorf("expected 3 follow-ups, got %d", len(fups))
+	}
+	for _, fu := range fups {
+		if fu.IsDone() {
+			t.Errorf("follow-up %s spawned as already-done", fu.Kind)
+		}
+	}
+}
+
+func TestFollowups_MarkDoneAndReopen(t *testing.T) {
+	f := newFixture(t)
+	inc, err := records.LogIncident(context.Background(), f.scope, records.LogIncidentRequest{
+		BikeID: f.bike, StudentID: f.student, Description: "x", CreatedBy: f.admin,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fups, _ := records.ListFollowups(context.Background(), f.scope, inc.ID)
+	id := fups[0].ID
+
+	if err := records.MarkFollowupDone(context.Background(), f.scope, id, f.admin, "Inspected, OK"); err != nil {
+		t.Fatalf("mark done: %v", err)
+	}
+	fups, _ = records.ListFollowups(context.Background(), f.scope, inc.ID)
+	var got records.Followup
+	for _, fu := range fups {
+		if fu.ID == id {
+			got = fu
+		}
+	}
+	if !got.IsDone() {
+		t.Error("expected follow-up to be done")
+	}
+	if got.Notes != "Inspected, OK" {
+		t.Errorf("notes = %q, want 'Inspected, OK'", got.Notes)
+	}
+
+	// Reopen clears done state.
+	if err := records.ReopenFollowup(context.Background(), f.scope, id); err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	fups, _ = records.ListFollowups(context.Background(), f.scope, inc.ID)
+	for _, fu := range fups {
+		if fu.ID == id && fu.IsDone() {
+			t.Error("follow-up still done after reopen")
+		}
+	}
 }
 
 func TestLogIncident_TakesBikeOffline(t *testing.T) {

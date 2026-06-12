@@ -1,11 +1,16 @@
 package httpapi
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/michaeljohnwatters/kickstand/internal/audit"
 	"github.com/michaeljohnwatters/kickstand/internal/booking"
 	"github.com/michaeljohnwatters/kickstand/internal/domain"
 	"github.com/michaeljohnwatters/kickstand/internal/tenant"
@@ -65,7 +70,46 @@ func (s *Server) handleTakeBikeOffline(w http.ResponseWriter, r *http.Request) {
 		writeDisruptionError(w, err)
 		return
 	}
+	bikeLabel := bikeDisplayName(r.Context(), s.DB, id.SchoolID, bikeID)
+	affected := len(res.AffectedBookings)
+	if affected == 0 {
+		audit.Describe(r.Context(),
+			"Took %s offline (reason: %s)", bikeLabel, req.Reason)
+	} else {
+		audit.Describe(r.Context(),
+			"Took %s offline (reason: %s) — %d booking%s need reassignment",
+			bikeLabel, req.Reason, affected, plural(affected))
+	}
 	writeJSON(w, http.StatusCreated, disruptionView(res))
+}
+
+// bikeDisplayName fetches a bike's nickname / make+model for human
+// audit summaries. Falls back to the ID when the bike is gone (audit
+// rows outlive their targets).
+func bikeDisplayName(ctx context.Context, db *sql.DB, schoolID domain.SchoolID, bikeID domain.BikeID) string {
+	var nickname, make, model string
+	err := db.QueryRowContext(ctx, `
+		SELECT COALESCE(nickname,''), COALESCE(make,''), COALESCE(model,'')
+		FROM bikes WHERE id = ? AND school_id = ?
+	`, string(bikeID), string(schoolID)).Scan(&nickname, &make, &model)
+	if err != nil {
+		return string(bikeID)
+	}
+	if nickname != "" {
+		return nickname
+	}
+	combined := strings.TrimSpace(make + " " + model)
+	if combined != "" {
+		return combined
+	}
+	return string(bikeID)
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func (s *Server) handleResolveDisruption(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +143,83 @@ func (s *Server) handleResolveDisruption(w http.ResponseWriter, r *http.Request)
 		writeDisruptionError(w, err)
 		return
 	}
+	// Enrich the audit row with a human sentence. Without this the
+	// audit log just shows the raw HTTP path — useless for the "why
+	// was this booking cancelled?" forensic loop. Best-effort: a
+	// query miss falls back to a generic message rather than blocking
+	// the response (which has already done the real work).
+	audit.Describe(r.Context(), "%s",
+		resolveAuditMessage(r.Context(), s.DB, id.SchoolID,
+			bookingID, req.Resolution, req.NewBikeID))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func resolveAuditMessage(ctx context.Context, db *sql.DB, schoolID domain.SchoolID,
+	bookingID domain.BookingID, resolution, newBikeID string) string {
+	var (
+		studentName, courseName, oldBikeNick string
+	)
+	_ = db.QueryRowContext(ctx, `
+		SELECT COALESCE(u.name, ''), COALESCE(ct.name, ''),
+		       COALESCE(bk.nickname, '')
+		FROM bookings b
+		JOIN sessions s     ON s.id = b.session_id     AND s.school_id = b.school_id
+		JOIN course_types ct ON ct.id = s.course_type_id AND ct.school_id = s.school_id
+		LEFT JOIN users u    ON u.id = b.student_id   AND u.school_id = b.school_id
+		LEFT JOIN bikes bk   ON bk.id = b.bike_id     AND bk.school_id = b.school_id
+		WHERE b.id = ? AND b.school_id = ?
+	`, string(bookingID), string(schoolID)).
+		Scan(&studentName, &courseName, &oldBikeNick)
+
+	who := studentName
+	if who == "" {
+		who = "a student"
+	}
+	what := courseName
+	if what == "" {
+		what = "their booking"
+	}
+	switch resolution {
+	case "swapped":
+		var newNick string
+		_ = db.QueryRowContext(ctx,
+			`SELECT COALESCE(nickname, '') FROM bikes WHERE id = ? AND school_id = ?`,
+			newBikeID, string(schoolID)).Scan(&newNick)
+		switch {
+		case oldBikeNick != "" && newNick != "":
+			return fmt.Sprintf("Swapped %s → %s for %s's %s",
+				oldBikeNick, newNick, who, what)
+		case newNick != "":
+			return fmt.Sprintf("Assigned %s to %s's %s", newNick, who, what)
+		default:
+			return fmt.Sprintf("Reassigned a bike on %s's %s", who, what)
+		}
+	case "dismissed":
+		return fmt.Sprintf("Dismissed past-due disruption row for %s's %s", who, what)
+	}
+	return fmt.Sprintf("Cancelled %s's %s (no suitable swap)", who, what)
+}
+
+// POST /disruptions/dismiss-past — bulk cancel-with-approval for any
+// affected booking still pending after its session ended. Admin/owner
+// only. Returns `{cancelled: N}`.
+func (s *Server) handleDismissPastDisruptions(w http.ResponseWriter, r *http.Request) {
+	id, _ := identityFromContext(r.Context())
+	if !requireAdminOwner(w, id) {
+		return
+	}
+	scope := tenant.NewScope(s.DB, id.SchoolID)
+	res, err := booking.DismissPastPendingDisruptions(r.Context(), scope, id.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	if res.Cancelled > 0 {
+		audit.Describe(r.Context(),
+			"Dismissed %d past-due disruption row%s",
+			res.Cancelled, plural(res.Cancelled))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cancelled": res.Cancelled})
 }
 
 func disruptionView(r *booking.TakeBikeOfflineResult) map[string]any {

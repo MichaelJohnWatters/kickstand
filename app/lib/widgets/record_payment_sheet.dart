@@ -116,6 +116,10 @@ class _RecordPaymentSheetState extends ConsumerState<RecordPaymentSheet> {
             notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
           );
       if (!mounted) return;
+      // Fire the caller-supplied invalidator FIRST (so the underlying
+      // route's provider transitions to loading before we pop), then
+      // close. Pop returns true so callers using the boolean future can
+      // double-up the refresh if their callback didn't catch.
       widget.onRecorded();
       Navigator.of(context).pop(true);
     } on ApiException catch (e) {

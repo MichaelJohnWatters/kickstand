@@ -5,28 +5,51 @@
 // Adminer / other common dev tools that grab 8080.) Override at build time:
 //   flutter run -d chrome --dart-define=KS_API_BASE_URL=https://api.kickstand.test
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/client.dart';
 import '../api/models.dart';
 import 'auth.dart';
-import 'token_storage.dart';
+import 'demo_mode.dart';
 
 const _defaultBaseUrl = String.fromEnvironment(
   'KS_API_BASE_URL',
   defaultValue: 'http://localhost:8765',
 );
 
-final tokenStorageProvider = Provider<TokenStorage>((_) => TokenStorage());
-
+/// Bearer token comes from Firebase Auth post-cutover. The SDK caches
+/// the ID token in process memory and on disk (Keychain/Keystore on
+/// mobile, IndexedDB on web), and `getIdToken()` refreshes it silently
+/// when it's within a few minutes of expiry — so callers don't have to
+/// retry on 401.
 final apiClientProvider = Provider<ApiClient>((ref) {
-  return ApiClient(baseUrl: _defaultBaseUrl, tokenSupplier: () => null);
+  if (kDemoMode) {
+    // Demo build — the FutureProvider below loads canned JSON assets
+    // and swaps the override in. Until that resolves the first call
+    // sees the placeholder ApiClient that throws on use.
+    final mock = ref.watch(_demoApiClientProvider).valueOrNull;
+    if (mock != null) return mock;
+  }
+  return ApiClient(
+    baseUrl: _defaultBaseUrl,
+    tokenSupplier: () async {
+      return await FirebaseAuth.instance.currentUser?.getIdToken();
+    },
+  );
+});
+
+/// Demo-mode boot: load every JSON dump into a MockApiClient. Tied to
+/// the picked role so flipping the role picker rebuilds with the
+/// right `/me`. Production code never reads this — `kDemoMode` is
+/// false so tree-shaking drops the whole branch.
+final _demoApiClientProvider = FutureProvider<MockApiClient>((ref) async {
+  final role = ref.watch(demoRoleProvider) ?? DemoRole.owner;
+  return MockApiClient.create(role);
 });
 
 final authControllerProvider = StateNotifierProvider<AuthController, AuthState>((ref) {
-  final api = ref.read(apiClientProvider);
-  final store = ref.read(tokenStorageProvider);
-  return AuthController(api, store);
+  return AuthController(ref.read(apiClientProvider));
 });
 
 /// Carries the most recent successful booking from the review step to the
@@ -85,6 +108,22 @@ final tomorrowLogisticsProvider =
 final pendingSignupsProvider =
     FutureProvider<List<PendingApplicant>>((ref) async {
   return ref.read(apiClientProvider).listPendingSignups();
+});
+
+/// Rejected sign-ups — disabled student accounts with no booking
+/// history, so the admin can review past rejections (and restore the
+/// occasional accidental click).
+final rejectedSignupsProvider =
+    FutureProvider<List<PendingApplicant>>((ref) async {
+  return ref.read(apiClientProvider).listRejectedSignups();
+});
+
+/// Approved sign-ups — students approved in the last 7 days, newest
+/// first. Lets the manager grab the phone number to call them after
+/// approving without hunting through the full Students list.
+final approvedSignupsProvider =
+    FutureProvider<List<PendingApplicant>>((ref) async {
+  return ref.read(apiClientProvider).listApprovedSignups();
 });
 
 /// Sidebar badge count, derived from [pendingSignupsProvider] so the badge
@@ -164,4 +203,40 @@ final myExpensesProvider =
 final expensesForReviewProvider =
     FutureProvider<ExpensesQueuePayload>((ref) async {
   return ref.read(apiClientProvider).listExpensesForReview();
+});
+
+/// Compliance dashboard payload. Non-autoDispose so the tab paints
+/// cached data immediately on re-entry and the silent-refresh cycle
+/// in `refresh.dart` updates it in the background.
+final complianceProvider = FutureProvider<ComplianceReport>((ref) async {
+  return ref.read(apiClientProvider).getCompliance();
+});
+
+/// Finance overview (monthly billed/collected, ageing, by-course).
+final revenueProvider = FutureProvider<RevenueReport>((ref) async {
+  return ref.read(apiClientProvider).getRevenue();
+});
+
+/// School-wide open incident follow-ups (with open/overdue counts).
+/// Drives the /admin/incidents page and the overview badge in one
+/// call so the two surfaces never disagree.
+class OpenFollowupsPayload {
+  final List<Map<String, dynamic>> followups;
+  final int open;
+  final int overdue;
+  const OpenFollowupsPayload({
+    required this.followups,
+    required this.open,
+    required this.overdue,
+  });
+}
+
+final openFollowupsProvider =
+    FutureProvider<OpenFollowupsPayload>((ref) async {
+  final res = await ref.read(apiClientProvider).listOpenFollowups();
+  return OpenFollowupsPayload(
+    followups: res.followups,
+    open: res.open,
+    overdue: res.overdue,
+  );
 });

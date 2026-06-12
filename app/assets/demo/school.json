@@ -1,0 +1,14 @@
+{
+  "cancelCutoffHours": 48,
+  "crossSiteNoticeHours": 12,
+  "instructorsCanRecordPayments": true,
+  "motUrgentDays": 14,
+  "motWarnDays": 90,
+  "name": "Lagan Valley Rider Training",
+  "onboardingMode": "approval",
+  "region": "NI",
+  "taxUrgentDays": 7,
+  "taxWarnDays": 30,
+  "testBodyLabel": "DVA",
+  "travelBufferMinutes": 15
+}

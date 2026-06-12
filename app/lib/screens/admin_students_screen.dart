@@ -8,6 +8,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../api/models.dart';
 import '../state/providers.dart';
 import '../theme/tokens.dart';
+import '../widgets/empty_state.dart';
 
 final _studentsQueryProvider = StateProvider.autoDispose<String>((_) => '');
 // 'active' is the default view — hides students who've passed their final
@@ -49,15 +50,34 @@ class AdminStudentsScreen extends ConsumerWidget {
       child: ListView(
         padding: const EdgeInsets.all(24),
         children: [
-          Text('Students',
-              style: GoogleFonts.plusJakartaSans(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w800,
-                  color: KsColors.ink,
-                  letterSpacing: -0.6)),
-          const SizedBox(height: 4),
-          Text(_subtitleFor(riderCount, owingPence),
-              style: const TextStyle(color: KsColors.ink3, fontSize: 13)),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Students',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 28,
+                            fontWeight: FontWeight.w800,
+                            color: KsColors.ink,
+                            letterSpacing: -0.6)),
+                    const SizedBox(height: 4),
+                    Text(_subtitleFor(riderCount, owingPence),
+                        style:
+                            const TextStyle(color: KsColors.ink3, fontSize: 13)),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              ElevatedButton.icon(
+                onPressed: () => _showAddStudentSheet(context, ref),
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('New student'),
+              ),
+            ],
+          ),
           const SizedBox(height: 16),
           _SearchAndFilter(
             filter: filter,
@@ -74,7 +94,7 @@ class AdminStudentsScreen extends ConsumerWidget {
                   child:
                       CircularProgressIndicator(color: KsColors.primary)),
             ),
-            error: (e, _) => Text('Couldn’t load.\n$e'),
+            error: (e, _) => KsEmptyState.error(message: e.toString()),
             data: (_) {
               if (filtered.isEmpty) return _empty(filter);
               return Container(
@@ -490,6 +510,186 @@ class _BalanceCell extends StatelessWidget {
     return Text(
       balancePence > 0 ? 'Owes £$amount' : 'Credit £$amount',
       style: TextStyle(color: colour, fontSize: 13, fontWeight: FontWeight.w700),
+    );
+  }
+}
+
+// ===== Add-student sheet =====
+
+Future<void> _showAddStudentSheet(BuildContext context, WidgetRef ref) async {
+  final created = await showModalBottomSheet<StudentRow>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: KsColors.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(KsRadius.xl)),
+    ),
+    builder: (_) => const _AddStudentSheet(),
+  );
+  if (created != null) {
+    ref.invalidate(studentsProvider);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Added ${created.name}.'),
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
+  }
+}
+
+class _AddStudentSheet extends ConsumerStatefulWidget {
+  const _AddStudentSheet();
+  @override
+  ConsumerState<_AddStudentSheet> createState() => _AddStudentSheetState();
+}
+
+class _AddStudentSheetState extends ConsumerState<_AddStudentSheet> {
+  final _name = TextEditingController();
+  final _email = TextEditingController();
+  final _phone = TextEditingController();
+  final _password = TextEditingController();
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _email.dispose();
+    _phone.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_name.text.trim().isEmpty ||
+        _email.text.trim().isEmpty ||
+        _password.text.length < 6) {
+      setState(() =>
+          _error = 'Name, email and a password ≥ 6 chars are required.');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final created = await ref.read(apiClientProvider).createStudent(
+            name: _name.text.trim(),
+            email: _email.text.trim(),
+            phone: _phone.text.trim(),
+            password: _password.text,
+          );
+      if (mounted) Navigator.pop(context, created);
+    } on ApiException catch (e) {
+      setState(() {
+        _error = e.message;
+        _saving = false;
+      });
+    } catch (_) {
+      setState(() {
+        _error = 'Could not add student.';
+        _saving = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final insets = MediaQuery.of(context).viewInsets;
+    return Padding(
+      padding: EdgeInsets.only(bottom: insets.bottom),
+      child: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    height: 4,
+                    width: 36,
+                    margin: const EdgeInsets.only(bottom: 14),
+                    decoration: BoxDecoration(
+                      color: KsColors.border2,
+                      borderRadius: BorderRadius.circular(KsRadius.pill),
+                    ),
+                  ),
+                ),
+                Text('New student',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 19,
+                        fontWeight: FontWeight.w800,
+                        color: KsColors.ink)),
+                const SizedBox(height: 4),
+                const Text(
+                  'Creates the account directly — skips the sign-up queue. '
+                  'They can change the password after first login.',
+                  style: TextStyle(color: KsColors.ink3, fontSize: 12),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _name,
+                  textCapitalization: TextCapitalization.words,
+                  decoration: const InputDecoration(labelText: 'Name'),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _email,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(labelText: 'Email'),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _phone,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                      labelText: 'Phone (optional)'),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _password,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Initial password',
+                    hintText: '≥ 6 characters',
+                  ),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: KsColors.dangerTint,
+                      borderRadius: BorderRadius.circular(KsRadius.md),
+                    ),
+                    child: Text(_error!,
+                        style: const TextStyle(color: KsColors.danger)),
+                  ),
+                ],
+                const SizedBox(height: 18),
+                ElevatedButton(
+                  onPressed: _saving ? null : _submit,
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(KsRadius.md),
+                    ),
+                  ),
+                  child: _saving
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                              color: Colors.white, strokeWidth: 2.5))
+                      : const Text('Add student'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

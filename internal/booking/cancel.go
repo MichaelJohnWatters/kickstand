@@ -150,6 +150,24 @@ func cancelInTx(ctx context.Context, tx *tenant.Scope, req CancelRequest, now ti
 		return nil, ErrBookingNotCancellable
 	}
 
+	// Void any auto-charge linked to this booking. For student-cancels
+	// we have the student ID from the booking row; for school-cancels we
+	// don't propagate the actor through the request yet, so voided_by
+	// stays NULL there (audit log captures the actor separately).
+	var voider domain.UserID
+	if req.CancelledBy == domain.CancelledByStudent {
+		voider = b.StudentID
+	}
+	if err := voidAutoCharge(ctx, tx, b.ID, voider, now); err != nil {
+		return nil, err
+	}
+
+	// A seat just opened up — promote the head of the waitlist (if any)
+	// inside the same tx so the seat and the new booking are atomic.
+	// Best-effort: any failure here is logged but does not break the
+	// cancel that triggered it.
+	promoteFromWaitlist(ctx, tx, b.SessionID, now)
+
 	b.Status = domain.BookingCancelled
 	b.CancelledBy = req.CancelledBy
 	b.CancellationReason = req.Reason

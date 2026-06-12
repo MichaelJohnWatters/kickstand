@@ -113,7 +113,7 @@ func (f *testFixture) seed(ctx context.Context) {
 	          duration_minutes, max_ratio, price_pence, non_teaching, created_at)
 	      VALUES (?, ?, 'CBT-125', 'CBT 125', 'NI', 'A1', 240, 4, 13000, 0, ?)`,
 		f.courseCBT, f.schoolID, createdAt)
-	exec(`INSERT INTO instructor_qualifications (school_id, instructor_id, course_type_id) VALUES (?, ?, ?)`,
+	exec(`INSERT INTO instructor_accreditations (school_id, instructor_id, course_type_id) VALUES (?, ?, ?)`,
 		f.schoolID, f.instructor, f.courseCBT)
 
 	// Bikes
@@ -141,6 +141,12 @@ func (f *testFixture) seed(ctx context.Context) {
 	      VALUES (?, ?, ?, ?, ?, ?, ?, 2, ?)`,
 		f.sessionID, f.schoolID, f.courseCBT, f.instructor, f.location,
 		sessionStart.Format(time.RFC3339), sessionEnd.Format(time.RFC3339), createdAt)
+	// Multi-instructor table is the source of truth for booking. Mirror
+	// the legacy instructor_id column into it as primary.
+	exec(`INSERT INTO session_instructors
+	      (id, school_id, session_id, instructor_id, is_primary, assigned_at, assigned_by)
+	      VALUES ('si_seed', ?, ?, ?, 1, ?, ?)`,
+		f.schoolID, f.sessionID, f.instructor, createdAt, f.instructor)
 }
 
 func (f *testFixture) book(req booking.Request) (*booking.Result, error) {
@@ -226,6 +232,67 @@ func TestBook_CapacityFull(t *testing.T) {
 	_, err := f.book(booking.Request{SessionID: f.sessionID, StudentID: "user_student_c"})
 	if !errors.Is(err, booking.ErrCapacityFull) {
 		t.Fatalf("expected ErrCapacityFull, got %v", err)
+	}
+}
+
+func TestBook_AutoChargesAtCoursePrice(t *testing.T) {
+	f := newFixture(t)
+	res, err := f.book(booking.Request{SessionID: f.sessionID, StudentID: f.studentA})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+	// One charge row tied to this booking, equal to seed price (13000p).
+	var amount int64
+	var desc string
+	var voidedAt sql.NullString
+	if err := f.db.QueryRow(`
+		SELECT amount_pence, description, voided_at
+		FROM charges WHERE booking_id = ? AND school_id = ?
+	`, res.Booking.ID, f.schoolID).Scan(&amount, &desc, &voidedAt); err != nil {
+		t.Fatalf("read charge: %v", err)
+	}
+	if amount != 13000 {
+		t.Errorf("amount = %d, want 13000", amount)
+	}
+	if voidedAt.Valid {
+		t.Errorf("fresh charge unexpectedly voided")
+	}
+
+	// Cancelling the booking voids the charge.
+	if _, err := booking.CancelAt(context.Background(), f.scope, booking.CancelRequest{
+		BookingID:         res.Booking.ID,
+		CancelledBy:       domain.CancelledByStudent,
+		ExpectedStudentID: f.studentA,
+	}, func() time.Time { return f.now }); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if err := f.db.QueryRow(`
+		SELECT amount_pence, description, voided_at
+		FROM charges WHERE booking_id = ? AND school_id = ?
+	`, res.Booking.ID, f.schoolID).Scan(&amount, &desc, &voidedAt); err != nil {
+		t.Fatalf("read charge after cancel: %v", err)
+	}
+	if !voidedAt.Valid {
+		t.Errorf("expected charge to be voided after cancel")
+	}
+}
+
+func TestBook_NoChargeWhenPriceIsZero(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.db.Exec(`UPDATE course_types SET price_pence = 0 WHERE id = ?`, f.courseCBT); err != nil {
+		t.Fatal(err)
+	}
+	res, err := f.book(booking.Request{SessionID: f.sessionID, StudentID: f.studentA})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+	var n int
+	if err := f.db.QueryRow(`SELECT COUNT(*) FROM charges WHERE booking_id = ?`,
+		res.Booking.ID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 charges when price=0, got %d", n)
 	}
 }
 
@@ -370,7 +437,7 @@ func TestBook_ConcurrentRace_OnlyOneBookingWins(t *testing.T) {
 
 func TestBook_InstructorUnqualified(t *testing.T) {
 	f := newFixture(t)
-	_, err := f.db.Exec(`DELETE FROM instructor_qualifications
+	_, err := f.db.Exec(`DELETE FROM instructor_accreditations
 	                     WHERE instructor_id = ? AND course_type_id = ?`,
 		f.instructor, f.courseCBT)
 	if err != nil {

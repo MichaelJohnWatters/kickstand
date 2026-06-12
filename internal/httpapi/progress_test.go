@@ -79,11 +79,12 @@ func TestProgressHTTP_AssessCompetency(t *testing.T) {
 
 func TestProgressHTTP_AssessCompetency_OtherInstructorRejected(t *testing.T) {
 	f := newProgressFixture(t)
-	// Create a second instructor in the same school using the fixture
-	// password so loginAs works.
+	// Create a second instructor in the same school.
 	resp, _ := f.do("POST", "/instructors", map[string]any{
-		"name": "Other", "email": "other@test.com", "password": f.password,
-		"homeLocationId": "loc_t", "qualifiedCourseIds": []string{"ct_cbt"},
+		"name": "Other", "email": "other@test.com", "password": "longenoughpw",
+		"homeLocationId": "loc_t", "accreditations": []map[string]any{
+			{"courseTypeId": "ct_cbt"},
+		},
 	}, f.adminToken)
 	if resp.StatusCode != 201 {
 		t.Fatal("invite")
@@ -118,14 +119,16 @@ func TestProgressHTTP_SetBookingNotes(t *testing.T) {
 
 func TestProgressHTTP_GetSessionDetail(t *testing.T) {
 	f := newProgressFixture(t)
-	// Add a safety flag and a charge so detail shows both.
+	// Add a safety flag so detail surfaces it.
 	if _, err := f.db.Exec(`INSERT INTO student_notes (id, school_id, student_id, kind, body, is_active, created_at, created_by)
 	                       VALUES ('n1', 'school_t', 'user_stu', 'safety_flag', 'Low seat required', 1, ?, 'user_admin')`,
 		f.now.Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}
+	// Add a manual top-up charge alongside the auto-charge that fired
+	// at booking time (course_types.price_pence = 13000 in the fixture).
 	resp, _ := f.do("POST", "/students/user_stu/charges",
-		map[string]any{"amountPence": 13000, "description": "CBT"}, f.adminToken)
+		map[string]any{"amountPence": 13000, "description": "top-up"}, f.adminToken)
 	if resp.StatusCode != 201 {
 		t.Fatal("seed charge")
 	}
@@ -137,8 +140,9 @@ func TestProgressHTTP_GetSessionDetail(t *testing.T) {
 	if !strings.Contains(string(body), "Low seat required") {
 		t.Errorf("expected safety flag in detail, got %s", body)
 	}
-	if !strings.Contains(string(body), `"outstandingPence":13000`) {
-		t.Errorf("expected outstanding 13000, got %s", body)
+	// Auto-charge (13000) + manual top-up (13000) = 26000.
+	if !strings.Contains(string(body), `"outstandingPence":26000`) {
+		t.Errorf("expected outstanding 26000 (auto-charge + manual), got %s", body)
 	}
 	if !strings.Contains(string(body), "U-turn") {
 		t.Errorf("expected competency template U-turn, got %s", body)
@@ -173,18 +177,16 @@ func TestProgressHTTP_GetStudentProgress_OwnView(t *testing.T) {
 
 func TestProgressHTTP_GetStudentProgress_OtherStudentRejected(t *testing.T) {
 	f := newProgressFixture(t)
-	// Sign up a second student and try to peek at the first.
-	resp, body := f.do("POST", "/auth/signup", map[string]any{
+	// Sign up a second student via the Firebase flow and try to peek at
+	// the first student's progress.
+	resp, body, sneakyTok := f.signupViaFirebase(map[string]any{
 		"schoolId": "school_t", "name": "Sneaky", "email": "sneaky@test.com",
-		"password": "longenoughpw", "transmissionPreference": "manual",
-		"licenceCategoryPursued": "A2",
-	}, "")
+		"transmissionPreference": "manual", "licenceCategoryPursued": "A2",
+	})
 	if resp.StatusCode != 201 {
 		t.Fatalf("signup: %d body=%s", resp.StatusCode, body)
 	}
-	var sig struct{ Token string }
-	json.Unmarshal(body, &sig)
-	resp, _ = f.do("GET", "/students/user_stu/progress", nil, sig.Token)
+	resp, _ = f.do("GET", "/students/user_stu/progress", nil, sneakyTok)
 	if resp.StatusCode != 403 {
 		t.Errorf("expected 403, got %d", resp.StatusCode)
 	}

@@ -25,8 +25,10 @@ func TestAvailability_InstructorCannotManageOther(t *testing.T) {
 	f := newLedgerFixture(t)
 	// Add a second instructor.
 	if resp, _ := f.do("POST", "/instructors", map[string]any{
-		"name": "Other", "email": "other@test.com", "password": f.password,
-		"homeLocationId": "loc_t", "qualifiedCourseIds": []string{"ct_cbt"},
+		"name": "Other", "email": "other@test.com", "password": "longenoughpw",
+		"homeLocationId": "loc_t", "accreditations": []map[string]any{
+			{"courseTypeId": "ct_cbt"},
+		},
 	}, f.adminToken); resp.StatusCode != 201 {
 		t.Fatal("invite")
 	}

@@ -1,0 +1,115 @@
+/* Kickstand — design tokens
+   Friendly geometric-sans, indigo on cool gray. */
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,500&family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+
+:root {
+  /* type */
+  --font: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --mono: 'Space Mono', ui-monospace, monospace;
+
+  /* accent (tweakable) */
+  --primary-h: 277;
+  --primary:       oklch(0.55 0.20 var(--primary-h));
+  --primary-deep:  oklch(0.40 0.16 var(--primary-h));
+  --primary-press: oklch(0.49 0.20 var(--primary-h));
+  --primary-tint:  oklch(0.955 0.030 var(--primary-h));
+  --primary-tint2: oklch(0.90 0.060 var(--primary-h));
+  --on-primary: #fff;
+
+  /* neutrals — cool */
+  --bg:        oklch(0.969 0.006 275);
+  --surface:   #ffffff;
+  --surface-2: oklch(0.985 0.005 275);
+  --surface-3: oklch(0.965 0.007 275);
+  --border:    oklch(0.915 0.008 275);
+  --border-2:  oklch(0.86 0.012 275);
+  --ink:       oklch(0.27 0.035 277);
+  --ink-2:     oklch(0.49 0.028 277);
+  --ink-3:     oklch(0.635 0.022 277);
+  --ink-4:     oklch(0.75 0.018 277);
+
+  /* semantic */
+  --success:      oklch(0.58 0.13 160);
+  --success-tint: oklch(0.955 0.040 160);
+  --warning:      oklch(0.70 0.135 70);
+  --warning-tint: oklch(0.958 0.050 78);
+  --danger:       oklch(0.575 0.185 25);
+  --danger-tint:  oklch(0.955 0.038 25);
+  --info:         var(--primary);
+  --info-tint:    var(--primary-tint);
+
+  /* radius */
+  --r-xs: 8px;
+  --r-sm: 11px;
+  --r:    14px;
+  --r-lg: 20px;
+  --r-xl: 28px;
+  --r-pill: 999px;
+
+  /* shadow */
+  --sh-1: 0 1px 2px rgba(40,33,90,.06), 0 1px 3px rgba(40,33,90,.05);
+  --sh-2: 0 6px 16px rgba(40,33,90,.08), 0 2px 5px rgba(40,33,90,.05);
+  --sh-3: 0 18px 44px rgba(40,33,90,.16), 0 4px 12px rgba(40,33,90,.07);
+  --sh-primary: 0 8px 22px oklch(0.55 0.20 var(--primary-h) / .32);
+
+  /* density */
+  --density: 1;
+}
+
+[data-density="compact"] { --density: 0.82; }
+
+[data-theme="dark"] {
+  --bg:        oklch(0.20 0.018 277);
+  --surface:   oklch(0.255 0.020 277);
+  --surface-2: oklch(0.285 0.022 277);
+  --surface-3: oklch(0.31 0.024 277);
+  --border:    oklch(0.36 0.022 277);
+  --border-2:  oklch(0.43 0.026 277);
+  --ink:       oklch(0.96 0.010 277);
+  --ink-2:     oklch(0.80 0.018 277);
+  --ink-3:     oklch(0.66 0.020 277);
+  --ink-4:     oklch(0.55 0.022 277);
+  --primary:       oklch(0.68 0.16 var(--primary-h));
+  --primary-deep:  oklch(0.78 0.12 var(--primary-h));
+  --primary-tint:  oklch(0.33 0.060 var(--primary-h));
+  --primary-tint2: oklch(0.40 0.090 var(--primary-h));
+  --success-tint: oklch(0.34 0.045 160);
+  --warning-tint: oklch(0.36 0.050 78);
+  --danger-tint:  oklch(0.35 0.050 25);
+  --sh-1: 0 1px 2px rgba(0,0,0,.30);
+  --sh-2: 0 6px 16px rgba(0,0,0,.34);
+  --sh-3: 0 18px 44px rgba(0,0,0,.46);
+}
+
+* { box-sizing: border-box; }
+
+body { margin: 0; }
+
+.ks {
+  font-family: var(--font);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'ss01';
+}
+
+.ks *, .ks *::before, .ks *::after { box-sizing: border-box; }
+
+.ks ::-webkit-scrollbar { width: 9px; height: 9px; }
+.ks ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 99px; border: 2px solid transparent; background-clip: padding-box; }
+.ks ::-webkit-scrollbar-track { background: transparent; }
+
+.mono { font-family: var(--mono); }
+
+/* fade/slide helpers for screen transitions */
+@keyframes ks-fade-up { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes ks-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ks-scale-in { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
+@keyframes ks-pop { 0% { transform: scale(.8); opacity: 0; } 60% { transform: scale(1.06); } 100% { transform: scale(1); opacity: 1; } }
+@keyframes ks-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes ks-draw { to { stroke-dashoffset: 0; } }
+
+.ks-screen { animation: ks-fade-up .34s cubic-bezier(.22,.9,.3,1); }
+
+button { font-family: inherit; cursor: pointer; }

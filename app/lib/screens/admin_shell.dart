@@ -15,6 +15,8 @@ import '../state/providers.dart';
 import '../state/refresh.dart';
 import '../state/school.dart';
 import '../theme/tokens.dart';
+import '../widgets/demo_mode_banner.dart';
+import '../widgets/email_verification_banner.dart';
 
 const _wideBreakpoint = 900.0;
 
@@ -45,6 +47,8 @@ class _NavItem {
 const _navItems = <_NavItem>[
   _NavItem(label: 'Overview', icon: Icons.dashboard_outlined, route: '/admin'),
   _NavItem(label: 'Master calendar', icon: Icons.calendar_month_outlined, route: '/admin/calendar'),
+  _NavItem(label: 'Templates', icon: Icons.event_repeat_outlined, route: '/admin/templates'),
+  _NavItem(label: 'Closures', icon: Icons.event_busy_outlined, route: '/admin/closures'),
   _NavItem(label: 'Students', icon: Icons.school_outlined, route: '/admin/students'),
   _NavItem(label: 'Sign-ups', icon: Icons.person_add_outlined, route: '/admin/signups',
       badgeSource: BadgeSource.signups),
@@ -54,12 +58,17 @@ const _navItems = <_NavItem>[
       badgeSource: BadgeSource.logistics),
   _NavItem(label: 'Disruptions', icon: Icons.report_outlined, route: '/admin/disruptions',
       badgeSource: BadgeSource.disruptions),
+  _NavItem(label: 'Incidents', icon: Icons.report_problem_outlined, route: '/admin/incidents'),
   _NavItem(label: 'Instructors', icon: Icons.group_outlined, route: '/admin/instructors'),
   _NavItem(label: 'Instructor pay', icon: Icons.payments_outlined, route: '/admin/instructor-pay'),
+  _NavItem(label: 'Finance', icon: Icons.bar_chart_rounded, route: '/admin/finance'),
   _NavItem(label: 'Reimbursements', icon: Icons.receipt_long_outlined, route: '/admin/reimbursements',
       badgeSource: BadgeSource.reimbursements),
   _NavItem(label: 'Locations', icon: Icons.place_outlined, route: '/admin/locations'),
   _NavItem(label: 'Course types', icon: Icons.menu_book_outlined, route: '/admin/courses'),
+  _NavItem(label: 'Compliance', icon: Icons.verified_user_outlined, route: '/admin/compliance'),
+  _NavItem(label: 'Audit log', icon: Icons.history, route: '/admin/audit'),
+  _NavItem(label: 'Settings', icon: Icons.settings_outlined, route: '/admin/settings'),
 ];
 
 class AdminShell extends ConsumerStatefulWidget {
@@ -110,7 +119,15 @@ class _AdminShellState extends ConsumerState<AdminShell> {
           child: Row(
             children: [
               const SizedBox(width: 256, child: _Sidebar(inDrawer: false)),
-              Expanded(child: widget.child),
+              Expanded(
+                child: Column(
+                  children: [
+                    const DemoModeBanner(),
+                    const EmailVerificationBanner(),
+                    Expanded(child: widget.child),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -129,7 +146,15 @@ class _AdminShellState extends ConsumerState<AdminShell> {
         backgroundColor: KsColors.surface,
         child: _Sidebar(inDrawer: true),
       ),
-      body: SelectionArea(child: widget.child),
+      body: SelectionArea(
+        child: Column(
+          children: [
+            const DemoModeBanner(),
+            const EmailVerificationBanner(),
+            Expanded(child: widget.child),
+          ],
+        ),
+      ),
     );
   }
 

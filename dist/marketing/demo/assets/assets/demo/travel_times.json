@@ -1,0 +1,34 @@
+{
+  "travelTimes": [
+    {
+      "fromLocationId": "loc_belfast",
+      "minutes": 25,
+      "toLocationId": "loc_lisburn"
+    },
+    {
+      "fromLocationId": "loc_belfast",
+      "minutes": 60,
+      "toLocationId": "loc_newry"
+    },
+    {
+      "fromLocationId": "loc_lisburn",
+      "minutes": 25,
+      "toLocationId": "loc_belfast"
+    },
+    {
+      "fromLocationId": "loc_lisburn",
+      "minutes": 50,
+      "toLocationId": "loc_newry"
+    },
+    {
+      "fromLocationId": "loc_newry",
+      "minutes": 60,
+      "toLocationId": "loc_belfast"
+    },
+    {
+      "fromLocationId": "loc_newry",
+      "minutes": 50,
+      "toLocationId": "loc_lisburn"
+    }
+  ]
+}

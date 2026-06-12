@@ -29,8 +29,23 @@ dependencies:
   # Time formatting / parsing
   intl: ^0.20.0
 
-  # Camera / gallery picker for expense receipts
+  # Camera / gallery picker for expense receipts. file_picker is the
+  # fallback for non-image receipts (PDFs etc.) when the instructor
+  # uploads from Files / Downloads.
   image_picker: ^1.1.2
+  file_picker: ^8.1.4
+
+  # Disk + memory cache for receipt images. Receipts are immutable
+  # post-upload so we cache aggressively (default ~100MB cap, LRU).
+  cached_network_image: ^3.4.1
+
+  # Open external URLs (Google Maps for location addresses, etc).
+  url_launcher: ^6.3.1
+
+  # Firebase Auth (Phase 0 — installed but not exercised yet; Phase 3
+  # of firebase-auth-migration.md replaces the rolled-own login flow).
+  firebase_core: ^3.6.0
+  firebase_auth: ^5.3.1
 
 dev_dependencies:
   flutter_test:
@@ -39,3 +54,9 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # Static seed payloads for the demo-mode build — produced by
+  # `make demo-data` from a live backend, so the JSON shapes match
+  # what ApiClient already parses.
+  assets:
+    - assets/demo/
+    - assets/demo/bike_expenses/

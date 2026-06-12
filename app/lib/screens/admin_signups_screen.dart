@@ -14,6 +14,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 
@@ -21,6 +22,12 @@ import '../api/models.dart';
 import '../state/providers.dart';
 import '../state/school.dart';
 import '../theme/tokens.dart';
+import '../widgets/empty_state.dart';
+
+enum _SignupsTab { pending, approved, rejected }
+
+final _signupsTabProvider =
+    StateProvider.autoDispose<_SignupsTab>((_) => _SignupsTab.pending);
 
 class AdminSignupsScreen extends ConsumerWidget {
   const AdminSignupsScreen({super.key});
@@ -28,12 +35,17 @@ class AdminSignupsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final pendingAsync = ref.watch(pendingSignupsProvider);
+    final approvedAsync = ref.watch(approvedSignupsProvider);
+    final rejectedAsync = ref.watch(rejectedSignupsProvider);
     final settingsAsync = ref.watch(schoolSettingsProvider);
+    final tab = ref.watch(_signupsTabProvider);
 
     return RefreshIndicator(
       color: KsColors.primary,
       onRefresh: () async {
         ref.invalidate(pendingSignupsProvider);
+        ref.invalidate(approvedSignupsProvider);
+        ref.invalidate(rejectedSignupsProvider);
         ref.invalidate(schoolSettingsProvider);
       },
       child: ListView(
@@ -57,43 +69,244 @@ class AdminSignupsScreen extends ConsumerWidget {
             data: (s) => _OnboardingModeCard(currentMode: s.onboardingMode),
           ),
           const SizedBox(height: 18),
-          _SectionLabel(
-            text: switch (settingsAsync.value?.onboardingMode) {
-              'approval' => 'Awaiting approval · ${pendingAsync.maybeWhen(data: (l) => l.length, orElse: () => 0)}',
-              _ => 'Awaiting approval',
-            },
+          // Tab strip — Pending is the daily flow; Approved keeps the
+          // last week of approvals around so the manager can still ring
+          // the student; Rejected is the escape hatch for the occasional
+          // accidental click.
+          _TabStrip(
+            current: tab,
+            pendingCount:
+                pendingAsync.maybeWhen(data: (l) => l.length, orElse: () => 0),
+            approvedCount:
+                approvedAsync.maybeWhen(data: (l) => l.length, orElse: () => 0),
+            rejectedCount:
+                rejectedAsync.maybeWhen(data: (l) => l.length, orElse: () => 0),
           ),
-          const SizedBox(height: 10),
-          // Even in 'open' mode we surface the pending list — those students
-          // signed up while approval was required and are still blocked
-          // until someone clears them. Only new signups skip approval going
-          // forward (the backend reads onboarding_mode on each signup).
-          pendingAsync.when(
-            loading: () => const _ListLoading(),
-            error: (e, _) => _ErrorCard(message: e.toString()),
-            data: (applicants) {
-              final mode = settingsAsync.value?.onboardingMode;
-              if (applicants.isEmpty) {
-                return mode == 'open'
-                    ? const _OpenModeCard()
-                    : const _AllCaughtUpCard();
-              }
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (mode == 'open') ...[
-                    const _OpenModeBanner(),
-                    const SizedBox(height: 12),
-                  ],
-                  ...applicants.map((a) => Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: _ApplicantCard(a),
-                      )),
-                ],
-              );
-            },
-          ),
+          const SizedBox(height: 14),
+          switch (tab) {
+            _SignupsTab.pending => _PendingBody(
+                pendingAsync: pendingAsync, settingsAsync: settingsAsync),
+            _SignupsTab.approved => _ApprovedBody(approvedAsync: approvedAsync),
+            _SignupsTab.rejected => _RejectedBody(rejectedAsync: rejectedAsync),
+          },
         ],
+      ),
+    );
+  }
+}
+
+class _PendingBody extends StatelessWidget {
+  final AsyncValue<List<PendingApplicant>> pendingAsync;
+  final AsyncValue<dynamic> settingsAsync;
+  const _PendingBody({
+    required this.pendingAsync,
+    required this.settingsAsync,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return pendingAsync.when(
+      loading: () => const _ListLoading(),
+      error: (e, _) => _ErrorCard(message: e.toString()),
+      data: (applicants) {
+        final mode = settingsAsync.value?.onboardingMode;
+        if (applicants.isEmpty) {
+          return mode == 'open'
+              ? const _OpenModeCard()
+              : const _AllCaughtUpCard();
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (mode == 'open') ...[
+              const _OpenModeBanner(),
+              const SizedBox(height: 12),
+            ],
+            ...applicants.map((a) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _ApplicantCard(a, mode: _ApplicantCardMode.pending),
+                )),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ApprovedBody extends StatelessWidget {
+  final AsyncValue<List<PendingApplicant>> approvedAsync;
+  const _ApprovedBody({required this.approvedAsync});
+
+  @override
+  Widget build(BuildContext context) {
+    return approvedAsync.when(
+      loading: () => const _ListLoading(),
+      error: (e, _) => _ErrorCard(message: e.toString()),
+      data: (applicants) {
+        if (applicants.isEmpty) {
+          return Container(
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(
+              color: KsColors.surface,
+              borderRadius: BorderRadius.circular(KsRadius.lg),
+              border: Border.all(color: KsColors.border),
+            ),
+            child: Column(
+              children: [
+                const Icon(Icons.thumb_up_alt_outlined,
+                    size: 36, color: KsColors.ink4),
+                const SizedBox(height: 10),
+                Text('No recent approvals',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: KsColors.ink2)),
+                const SizedBox(height: 4),
+                const Text(
+                    'Students you approve land here for a week so you can still call them.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: KsColors.ink3, fontSize: 12.5)),
+              ],
+            ),
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final a in applicants)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _ApplicantCard(a, mode: _ApplicantCardMode.approved),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _RejectedBody extends StatelessWidget {
+  final AsyncValue<List<PendingApplicant>> rejectedAsync;
+  const _RejectedBody({required this.rejectedAsync});
+
+  @override
+  Widget build(BuildContext context) {
+    return rejectedAsync.when(
+      loading: () => const _ListLoading(),
+      error: (e, _) => _ErrorCard(message: e.toString()),
+      data: (applicants) {
+        if (applicants.isEmpty) {
+          return Container(
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(
+              color: KsColors.surface,
+              borderRadius: BorderRadius.circular(KsRadius.lg),
+              border: Border.all(color: KsColors.border),
+            ),
+            child: Column(
+              children: [
+                const Icon(Icons.history_toggle_off,
+                    size: 36, color: KsColors.ink4),
+                const SizedBox(height: 10),
+                Text('No rejected sign-ups',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: KsColors.ink2)),
+                const SizedBox(height: 4),
+                const Text(
+                    'Rejections show up here so you can restore one if it was a mistake.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: KsColors.ink3, fontSize: 12.5)),
+              ],
+            ),
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final a in applicants)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _ApplicantCard(a, mode: _ApplicantCardMode.rejected),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Pending / Approved / Rejected tab pill row. Lightweight — same look
+/// as the Mine/All toggle on instructor schedule, but with counts
+/// attached.
+class _TabStrip extends ConsumerWidget {
+  final _SignupsTab current;
+  final int pendingCount;
+  final int approvedCount;
+  final int rejectedCount;
+  const _TabStrip({
+    required this.current,
+    required this.pendingCount,
+    required this.approvedCount,
+    required this.rejectedCount,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Row(children: [
+      _pill(ref, _SignupsTab.pending, 'Pending', pendingCount),
+      const SizedBox(width: 8),
+      _pill(ref, _SignupsTab.approved, 'Approved', approvedCount),
+      const SizedBox(width: 8),
+      _pill(ref, _SignupsTab.rejected, 'Rejected', rejectedCount),
+    ]);
+  }
+
+  Widget _pill(WidgetRef ref, _SignupsTab tab, String label, int count) {
+    final active = current == tab;
+    final accent = switch (tab) {
+      _SignupsTab.pending => KsColors.primary,
+      _SignupsTab.approved => KsColors.success,
+      _SignupsTab.rejected => KsColors.ink3,
+    };
+    final tint = switch (tab) {
+      _SignupsTab.pending => KsColors.primaryTint,
+      _SignupsTab.approved => KsColors.successTint,
+      _SignupsTab.rejected => KsColors.surface3,
+    };
+    return InkWell(
+      onTap: () => ref.read(_signupsTabProvider.notifier).state = tab,
+      borderRadius: BorderRadius.circular(KsRadius.pill),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: active ? tint : KsColors.surface,
+          borderRadius: BorderRadius.circular(KsRadius.pill),
+          border: Border.all(
+              color: active ? accent.withValues(alpha: 0.45) : KsColors.border,
+              width: active ? 1.5 : 1),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Text(label,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  color: active ? accent : KsColors.ink2)),
+          const SizedBox(width: 7),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+            decoration: BoxDecoration(
+              color: active ? accent : KsColors.surface3,
+              borderRadius: BorderRadius.circular(KsRadius.pill),
+            ),
+            child: Text('$count',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w800,
+                    color: active ? Colors.white : KsColors.ink3)),
+          ),
+        ]),
       ),
     );
   }
@@ -293,29 +506,13 @@ class _Segmented extends StatelessWidget {
   }
 }
 
-// ===== Section label =====
-
-class _SectionLabel extends StatelessWidget {
-  final String text;
-  const _SectionLabel({required this.text});
-  @override
-  Widget build(BuildContext context) {
-    return Text(text.toUpperCase(),
-        style: GoogleFonts.plusJakartaSans(
-            color: KsColors.ink3,
-            fontSize: 11.5,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0.6));
-  }
-}
-
 // ===== Empty state cards =====
 
 class _OpenModeCard extends StatelessWidget {
   const _OpenModeCard();
   @override
   Widget build(BuildContext context) {
-    return _emptyCard(
+    return const KsEmptyState(
       icon: Icons.bolt_rounded,
       title: 'Open booking is on',
       message:
@@ -361,7 +558,7 @@ class _AllCaughtUpCard extends StatelessWidget {
   const _AllCaughtUpCard();
   @override
   Widget build(BuildContext context) {
-    return _emptyCard(
+    return const KsEmptyState(
       icon: Icons.check_circle_outline,
       title: 'All caught up',
       message: 'No sign-ups waiting for review.',
@@ -374,11 +571,9 @@ class _ErrorCard extends StatelessWidget {
   const _ErrorCard({required this.message});
   @override
   Widget build(BuildContext context) {
-    return _emptyCard(
-      icon: Icons.error_outline,
+    return KsEmptyState.error(
       title: 'Couldn’t load sign-ups',
       message: message,
-      iconColour: KsColors.danger,
     );
   }
 }
@@ -400,55 +595,14 @@ class _ListLoading extends StatelessWidget {
   }
 }
 
-Widget _emptyCard({
-  required IconData icon,
-  required String title,
-  required String message,
-  Color? iconColour,
-}) {
-  return Container(
-    padding: const EdgeInsets.fromLTRB(24, 36, 24, 36),
-    decoration: BoxDecoration(
-      color: KsColors.surface,
-      borderRadius: BorderRadius.circular(KsRadius.lg),
-      border: Border.all(color: KsColors.border),
-    ),
-    child: Column(
-      children: [
-        Container(
-          width: 52,
-          height: 52,
-          decoration: BoxDecoration(
-            color: KsColors.surface3,
-            borderRadius: BorderRadius.circular(KsRadius.md),
-          ),
-          alignment: Alignment.center,
-          child: Icon(icon, color: iconColour ?? KsColors.ink4, size: 26),
-        ),
-        const SizedBox(height: 14),
-        Text(title,
-            style: GoogleFonts.plusJakartaSans(
-                fontSize: 16, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 4),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 360),
-          child: Text(
-            message,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-                color: KsColors.ink3, fontSize: 13.5, height: 1.45),
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
 // ===== Applicant card =====
+
+enum _ApplicantCardMode { pending, approved, rejected }
 
 class _ApplicantCard extends ConsumerStatefulWidget {
   final PendingApplicant a;
-  const _ApplicantCard(this.a);
+  final _ApplicantCardMode mode;
+  const _ApplicantCard(this.a, {required this.mode});
   @override
   ConsumerState<_ApplicantCard> createState() => _ApplicantCardState();
 }
@@ -456,22 +610,23 @@ class _ApplicantCard extends ConsumerStatefulWidget {
 class _ApplicantCardState extends ConsumerState<_ApplicantCard> {
   bool _saving = false;
 
-  Future<void> _approve() => _act(approve: true);
+  Future<void> _approve() => _act(action: _Action.approve);
 
   Future<void> _reject() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(KsRadius.lg)),
         title: const Text('Reject this applicant?'),
-        content: Text('${widget.a.name} won’t be able to log in.'),
+        content: Text(
+            '${widget.a.name} won’t be able to log in. You can restore them later from the Rejected tab.'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
+              onPressed: () => Navigator.pop(dialogCtx, false),
               child: const Text('Cancel')),
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogCtx, true),
             child: const Text('Reject',
                 style: TextStyle(color: KsColors.danger)),
           ),
@@ -479,26 +634,35 @@ class _ApplicantCardState extends ConsumerState<_ApplicantCard> {
       ),
     );
     if (confirmed != true) return;
-    await _act(approve: false);
+    await _act(action: _Action.reject);
   }
 
-  Future<void> _act({required bool approve}) async {
+  Future<void> _restore() => _act(action: _Action.restore);
+
+  Future<void> _act({required _Action action}) async {
     setState(() => _saving = true);
     final api = ref.read(apiClientProvider);
     try {
-      if (approve) {
-        await api.approveSignup(widget.a.userId);
-      } else {
-        await api.rejectSignup(widget.a.userId);
+      switch (action) {
+        case _Action.approve:
+          await api.approveSignup(widget.a.userId);
+        case _Action.reject:
+          await api.rejectSignup(widget.a.userId);
+        case _Action.restore:
+          await api.restoreSignup(widget.a.userId);
       }
-      // pendingSignupsCountProvider derives from this — sidebar updates with it.
+      // Approve / reject / restore all shift between pending and
+      // rejected lists — invalidate all three so whichever tab the
+      // admin flips to is fresh. Approve in particular needs the
+      // approved list invalidated so the newly-approved row pops in.
       ref.invalidate(pendingSignupsProvider);
-      // Approve creates an active student; refresh the Students roster too.
-      if (approve) ref.invalidate(studentsProvider);
+      ref.invalidate(approvedSignupsProvider);
+      ref.invalidate(rejectedSignupsProvider);
+      if (action == _Action.approve) ref.invalidate(studentsProvider);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Could not ${approve ? 'approve' : 'reject'}: $e'),
+          content: Text('Could not ${action.name}: $e'),
           backgroundColor: KsColors.danger,
           behavior: SnackBarBehavior.floating,
         ));
@@ -553,7 +717,11 @@ class _ApplicantCardState extends ConsumerState<_ApplicantCard> {
                                   color: KsColors.ink)),
                         ),
                         const SizedBox(width: 8),
-                        const _PendingBadge(),
+                        switch (widget.mode) {
+                          _ApplicantCardMode.pending => const _PendingBadge(),
+                          _ApplicantCardMode.approved => const _ApprovedBadge(),
+                          _ApplicantCardMode.rejected => const _RejectedBadge(),
+                        },
                       ],
                     ),
                     const SizedBox(height: 1),
@@ -578,44 +746,101 @@ class _ApplicantCardState extends ConsumerState<_ApplicantCard> {
             _SignupNoteBlock(text: a.signupNote),
           ],
           const SizedBox(height: 13),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _saving ? null : _approve,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: KsColors.success,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(0, 38),
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    textStyle: GoogleFonts.plusJakartaSans(
-                        fontWeight: FontWeight.w800, fontSize: 13),
-                  ),
-                  icon: _saving
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(
-                              color: Colors.white, strokeWidth: 2.4))
-                      : const Icon(Icons.check_rounded, size: 16),
-                  label: const Text('Approve'),
+          // Buttons sit on the leading edge of the card — Expanded
+          // stretched them across the whole card which looked clumsy
+          // on wider screens. Sized + left-aligned reads as "two
+          // actions on this row", not "this card has two giant CTAs".
+          if (widget.mode == _ApplicantCardMode.approved)
+            Row(children: [
+              OutlinedButton.icon(
+                onPressed: () =>
+                    context.go('/admin/students/${widget.a.userId}'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: KsColors.ink2,
+                  side: const BorderSide(color: KsColors.border2),
+                  minimumSize: const Size(140, 38),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 10),
+                  textStyle: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w700, fontSize: 13),
+                ),
+                icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                label: const Text('Open student'),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Approved. They can log in and book. Listed here for a week so you can still ring them.',
+                  style: TextStyle(color: KsColors.ink3, fontSize: 12),
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _saving ? null : _reject,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: KsColors.ink2,
-                    side: const BorderSide(color: KsColors.border2),
-                    minimumSize: const Size(0, 38),
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    textStyle: GoogleFonts.plusJakartaSans(
-                        fontWeight: FontWeight.w700, fontSize: 13),
-                  ),
-                  icon: const Icon(Icons.close_rounded, size: 16),
-                  label: const Text('Reject'),
+            ])
+          else if (widget.mode == _ApplicantCardMode.rejected)
+            Row(children: [
+              ElevatedButton.icon(
+                onPressed: _saving ? null : _restore,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: KsColors.primary,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(120, 38),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 10),
+                  textStyle: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w800, fontSize: 13),
                 ),
+                icon: _saving
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2.4))
+                    : const Icon(Icons.replay_rounded, size: 16),
+                label: const Text('Restore'),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Sends them back to the Pending tab for re-review. Their account stays disabled until you approve.',
+                  style: TextStyle(color: KsColors.ink3, fontSize: 12),
+                ),
+              ),
+            ])
+          else
+            Row(children: [
+              ElevatedButton.icon(
+                onPressed: _saving ? null : _approve,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: KsColors.primary,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(120, 38),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 10),
+                  textStyle: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w800, fontSize: 13),
+                ),
+                icon: _saving
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2.4))
+                    : const Icon(Icons.check_rounded, size: 16),
+                label: const Text('Approve'),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: _saving ? null : _reject,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: KsColors.ink2,
+                  side: const BorderSide(color: KsColors.border2),
+                  minimumSize: const Size(100, 38),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 10),
+                  textStyle: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w700, fontSize: 13),
+                ),
+                icon: const Icon(Icons.close_rounded, size: 16),
+                label: const Text('Reject'),
               ),
             ],
           ),
@@ -632,7 +857,11 @@ class _ApplicantCardState extends ConsumerState<_ApplicantCard> {
     if (a.transmissionPreference.isNotEmpty) {
       bits.add(a.transmissionPreference);
     }
-    bits.add('applied ${_relTime(a.signedUpAt)}');
+    if (widget.mode == _ApplicantCardMode.approved && a.approvedAt != null) {
+      bits.add('approved ${_relTime(a.approvedAt!)}');
+    } else {
+      bits.add('applied ${_relTime(a.signedUpAt)}');
+    }
     if (a.dateOfBirth.isNotEmpty) {
       final age = _ageFromDob(a.dateOfBirth);
       if (age != null) bits.add('$age yrs');
@@ -640,6 +869,8 @@ class _ApplicantCardState extends ConsumerState<_ApplicantCard> {
     return bits.join(' · ');
   }
 }
+
+enum _Action { approve, reject, restore }
 
 class _PendingBadge extends StatelessWidget {
   const _PendingBadge();
@@ -654,6 +885,44 @@ class _PendingBadge extends StatelessWidget {
       child: Text('Pending',
           style: GoogleFonts.plusJakartaSans(
               color: KsColors.warning,
+              fontWeight: FontWeight.w800,
+              fontSize: 10.5)),
+    );
+  }
+}
+
+class _ApprovedBadge extends StatelessWidget {
+  const _ApprovedBadge();
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: KsColors.successTint,
+        borderRadius: BorderRadius.circular(KsRadius.pill),
+      ),
+      child: Text('Approved',
+          style: GoogleFonts.plusJakartaSans(
+              color: KsColors.success,
+              fontWeight: FontWeight.w800,
+              fontSize: 10.5)),
+    );
+  }
+}
+
+class _RejectedBadge extends StatelessWidget {
+  const _RejectedBadge();
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: KsColors.dangerTint,
+        borderRadius: BorderRadius.circular(KsRadius.pill),
+      ),
+      child: Text('Rejected',
+          style: GoogleFonts.plusJakartaSans(
+              color: KsColors.danger,
               fontWeight: FontWeight.w800,
               fontSize: 10.5)),
     );

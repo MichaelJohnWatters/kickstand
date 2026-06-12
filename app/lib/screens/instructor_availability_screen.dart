@@ -9,6 +9,8 @@
 // The instructor sees their own; admin sees the same screen pointed at any
 // instructor (deferred — for now we just use the caller's own id).
 
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -51,12 +53,9 @@ class InstructorAvailabilityScreen extends ConsumerWidget {
 
     return Scaffold(
       backgroundColor: KsColors.bg,
-      appBar: AppBar(
-        title: Text('Availability',
-            style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 22)),
-        actions: const [NotificationBell()],
-      ),
-      body: RefreshIndicator(
+      body: SafeArea(
+        bottom: false,
+        child: RefreshIndicator(
         color: KsColors.primary,
         onRefresh: () async {
           ref.invalidate(availabilitySlotsProvider(id));
@@ -77,15 +76,15 @@ class InstructorAvailabilityScreen extends ConsumerWidget {
             // Render Mon..Sun (weekday indices 1..6 then 0).
             const displayOrder = [1, 2, 3, 4, 5, 6, 0];
             return ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(18, 8, 18, 28),
               children: [
-                Text('Weekly availability',
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 16, fontWeight: FontWeight.w800, color: KsColors.ink, letterSpacing: -0.3)),
+                _Header(name: me.name),
+                const SizedBox(height: 18),
+                _SectionLabel('Weekly availability'),
                 const SizedBox(height: 4),
-                const Text('Recurring hours you offer.',
-                    style: TextStyle(color: KsColors.ink3, fontSize: 12)),
-                const SizedBox(height: 10),
+                const Text('Recurring hours you offer. Tap a slot to remove.',
+                    style: TextStyle(color: KsColors.ink3, fontSize: 12.5)),
+                const SizedBox(height: 12),
                 ...displayOrder.map((weekday) => Padding(
                       padding: const EdgeInsets.only(bottom: 10),
                       child: _DayCard(
@@ -94,12 +93,9 @@ class InstructorAvailabilityScreen extends ConsumerWidget {
                         instructorId: id,
                       ),
                     )),
-                const SizedBox(height: 20),
+                const SizedBox(height: 22),
                 Row(children: [
-                  Text('Time off',
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 16, fontWeight: FontWeight.w800, color: KsColors.ink, letterSpacing: -0.3)),
-                  const Spacer(),
+                  Expanded(child: _SectionLabel('Time off')),
                   TextButton.icon(
                     onPressed: () => _showAddTimeOffSheet(context, ref, id),
                     icon: const Icon(Icons.add_circle_outline_rounded, size: 18),
@@ -108,8 +104,8 @@ class InstructorAvailabilityScreen extends ConsumerWidget {
                 ]),
                 const SizedBox(height: 4),
                 const Text('Holidays, training days, anything blocking sessions.',
-                    style: TextStyle(color: KsColors.ink3, fontSize: 12)),
-                const SizedBox(height: 10),
+                    style: TextStyle(color: KsColors.ink3, fontSize: 12.5)),
+                const SizedBox(height: 12),
                 timeOffAsync.when(
                   loading: () => const Padding(
                       padding: EdgeInsets.symmetric(vertical: 12),
@@ -137,8 +133,60 @@ class InstructorAvailabilityScreen extends ConsumerWidget {
           },
         ),
       ),
+      ),
     );
   }
+}
+
+class _Header extends StatelessWidget {
+  final String name;
+  const _Header({required this.name});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (name.isNotEmpty)
+                Text(name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600,
+                        color: KsColors.ink3)),
+              const SizedBox(height: 2),
+              Text('Availability',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 26,
+                      fontWeight: FontWeight.w800,
+                      color: KsColors.ink,
+                      letterSpacing: -0.6,
+                      height: 1.05)),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        const NotificationBell(),
+      ],
+    );
+  }
+}
+
+class _SectionLabel extends StatelessWidget {
+  final String text;
+  const _SectionLabel(this.text);
+  @override
+  Widget build(BuildContext context) => Text(text.toUpperCase(),
+      style: GoogleFonts.plusJakartaSans(
+          fontSize: 11.5,
+          fontWeight: FontWeight.w800,
+          color: KsColors.ink3,
+          letterSpacing: 0.6));
 }
 
 class _DayCard extends ConsumerWidget {
@@ -203,13 +251,13 @@ class _SlotChipState extends ConsumerState<_SlotChip> {
   Future<void> _delete() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: const Text('Delete slot?'),
         content: Text('${widget.slot.startsAtLocal}–${widget.slot.endsAtLocal} on ${_weekdayNames[widget.slot.weekday]}'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(dialogCtx, false), child: const Text('Cancel')),
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogCtx, true),
             child: const Text('Delete', style: TextStyle(color: KsColors.danger)),
           ),
         ],
@@ -239,7 +287,7 @@ class _SlotChipState extends ConsumerState<_SlotChip> {
     final locName = widget.slot.locationId.isEmpty
         ? ''
         : (locations.firstWhere((l) => l.id == widget.slot.locationId,
-                orElse: () => LocationLite(id: '', name: '', address: '')).name);
+                orElse: () => LocationLite(id: '', name: '', address: '', imageBytes: Uint8List(0))).name);
     return InkWell(
       onTap: _deleting ? null : _delete,
       borderRadius: BorderRadius.circular(KsRadius.pill),

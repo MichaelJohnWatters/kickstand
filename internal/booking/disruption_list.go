@@ -2,6 +2,8 @@ package booking
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -223,10 +225,82 @@ func loadAffectedForDisruption(ctx context.Context, scope *tenant.Scope, disrupt
 		if err != nil {
 			return nil, fmt.Errorf("hydrate candidate bikes: %w", err)
 		}
+		// Travel-time matrix — small (≤ N² for N locations), loaded
+		// once and reused for every candidate. Lookup misses (e.g. a
+		// school hasn't filled the cell) yield 0, which the UI treats
+		// as "unknown" rather than rendering a misleading number.
+		travel, err := loadTravelMatrix(ctx, scope)
+		if err != nil {
+			return nil, fmt.Errorf("hydrate travel matrix: %w", err)
+		}
+		// School-wide travel buffer (added to the raw drive time when
+		// judging back-to-back feasibility). Falls back to 15 min if
+		// the column wasn't set up — same default the calendar's
+		// tight-travel banner uses.
+		bufferMins, err := loadTravelBuffer(ctx, scope)
+		if err != nil {
+			return nil, fmt.Errorf("load travel buffer: %w", err)
+		}
+		// Pass 1: compute tight-from-prior, accumulating every location
+		// id we'll need a human name for (candidates' current locations
+		// AND prior-session locations).
+		type priorInfo struct {
+			endsAt time.Time
+			locID  domain.LocationID
+		}
+		// indexed by (affected-index, candidate-index)
+		priors := map[[2]int]priorInfo{}
+		wantLocs := map[domain.LocationID]struct{}{}
 		for i := range collected {
+			toLoc := collected[i].row.LocationID
+			targetStart := collected[i].row.SessionStartsAt
+			for j, sc := range collected[i].row.SwapCandidates {
+				if sc.CurrentLocationID != "" {
+					wantLocs[sc.CurrentLocationID] = struct{}{}
+				}
+				priorEnd, priorLoc, ok, err := findPriorBookingForBike(
+					ctx, scope, sc.BikeID, targetStart)
+				if err != nil {
+					return nil, fmt.Errorf("prior-session lookup: %w", err)
+				}
+				if !ok {
+					continue
+				}
+				travelMins := 0
+				if priorLoc != toLoc {
+					travelMins = travel[travelKey{from: priorLoc, to: toLoc}]
+				}
+				available := int(targetStart.Sub(priorEnd).Minutes())
+				if available < travelMins+bufferMins {
+					priors[[2]int{i, j}] = priorInfo{
+						endsAt: priorEnd, locID: priorLoc,
+					}
+					wantLocs[priorLoc] = struct{}{}
+				}
+			}
+		}
+		locNames, err := lookupLocationNames(ctx, scope, wantLocs)
+		if err != nil {
+			return nil, fmt.Errorf("hydrate candidate locations: %w", err)
+		}
+		// Pass 2: apply everything to the candidates.
+		for i := range collected {
+			toLoc := collected[i].row.LocationID
 			for j, sc := range collected[i].row.SwapCandidates {
 				collected[i].row.SwapCandidates[j].BikeNickname = nicks[sc.BikeID]
 				collected[i].row.SwapCandidates[j].BikeRegistration = regs[sc.BikeID]
+				collected[i].row.SwapCandidates[j].CurrentLocationName =
+					locNames[sc.CurrentLocationID]
+				if sc.IsCrossSite {
+					collected[i].row.SwapCandidates[j].TravelMinutes =
+						travel[travelKey{from: sc.CurrentLocationID, to: toLoc}]
+				}
+				if p, ok := priors[[2]int{i, j}]; ok {
+					collected[i].row.SwapCandidates[j].TightFromPrior = true
+					collected[i].row.SwapCandidates[j].PriorSessionEndsAt = p.endsAt
+					collected[i].row.SwapCandidates[j].PriorSessionLocation =
+						locNames[p.locID]
+				}
 			}
 		}
 	}
@@ -236,6 +310,112 @@ func loadAffectedForDisruption(ctx context.Context, scope *tenant.Scope, disrupt
 		out[i] = wf.row
 	}
 	return out, nil
+}
+
+// travelKey is the (from, to) pair we key the school's travel-time
+// matrix by. We load the matrix into memory once per request rather
+// than running a query per swap candidate.
+type travelKey struct {
+	from, to domain.LocationID
+}
+
+// loadTravelBuffer reads the school's configured buffer minutes — the
+// padding added on top of raw drive time when judging back-to-back
+// feasibility. Defaults to 15 if the column isn't populated.
+func loadTravelBuffer(ctx context.Context, scope *tenant.Scope) (int, error) {
+	var mins int
+	err := scope.Conn().QueryRowContext(ctx,
+		`SELECT COALESCE(travel_buffer_minutes, 15) FROM schools WHERE id = ?`,
+		string(scope.SchoolID())).Scan(&mins)
+	if errors.Is(err, sql.ErrNoRows) || mins <= 0 {
+		return 15, nil
+	}
+	return mins, err
+}
+
+// findPriorBookingForBike looks up the candidate bike's most recent
+// booking ending strictly before `before`. Returns (ends_at, location_id,
+// true) when one exists; (zero, "", false) when the bike has no prior
+// commitment in the window. Only active bookings count — cancelled and
+// no-show rows are skipped (they don't physically tie up the bike).
+func findPriorBookingForBike(ctx context.Context, scope *tenant.Scope, bikeID domain.BikeID, before time.Time) (time.Time, domain.LocationID, bool, error) {
+	var endsStr, locID string
+	err := scope.Conn().QueryRowContext(ctx, `
+		SELECT s.ends_at, s.location_id
+		FROM bookings b
+		JOIN sessions s ON s.id = b.session_id AND s.school_id = b.school_id
+		WHERE b.school_id = ? AND b.bike_id = ?
+		  AND b.status IN ('booked', 'needs_reassignment', 'completed')
+		  AND s.ends_at < ?
+		ORDER BY s.ends_at DESC
+		LIMIT 1
+	`, string(scope.SchoolID()), string(bikeID),
+		before.UTC().Format(time.RFC3339)).
+		Scan(&endsStr, &locID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, "", false, nil
+	}
+	if err != nil {
+		return time.Time{}, "", false, err
+	}
+	ends, perr := parseTime(endsStr)
+	if perr != nil {
+		return time.Time{}, "", false, perr
+	}
+	return ends, domain.LocationID(locID), true, nil
+}
+
+func loadTravelMatrix(ctx context.Context, scope *tenant.Scope) (map[travelKey]int, error) {
+	rows, err := scope.Conn().QueryContext(ctx,
+		`SELECT from_location_id, to_location_id, minutes
+		   FROM travel_times WHERE school_id = ?`,
+		string(scope.SchoolID()))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[travelKey]int{}
+	for rows.Next() {
+		var f, t string
+		var m int
+		if err := rows.Scan(&f, &t, &m); err != nil {
+			return nil, err
+		}
+		out[travelKey{from: domain.LocationID(f), to: domain.LocationID(t)}] = m
+	}
+	return out, rows.Err()
+}
+
+// lookupLocationNames returns a location-id → name map. Mirrors
+// lookupBikeLabels — single SELECT, N is small.
+func lookupLocationNames(ctx context.Context, scope *tenant.Scope, ids map[domain.LocationID]struct{}) (map[domain.LocationID]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	args := []any{string(scope.SchoolID())}
+	placeholders := make([]byte, 0, len(ids)*2)
+	for id := range ids {
+		if len(placeholders) > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '?')
+		args = append(args, string(id))
+	}
+	q := "SELECT id, COALESCE(name,'') FROM locations WHERE school_id = ? AND id IN (" + string(placeholders) + ")"
+	rows, err := scope.Conn().QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[domain.LocationID]string{}
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		out[domain.LocationID(id)] = name
+	}
+	return out, rows.Err()
 }
 
 // lookupBikeLabels returns nickname + registration maps for the given bike IDs.

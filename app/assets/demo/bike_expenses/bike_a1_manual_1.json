@@ -1,0 +1,50 @@
+{
+  "expenses": [
+    {
+      "amountPence": 6900,
+      "bikeId": "bike_a1_manual_1",
+      "category": "mot",
+      "id": "bm_a1m1_mot",
+      "notes": "MOT pass — no advisories",
+      "occurredAt": "2026-05-09",
+      "receiptContentType": "image/jpeg",
+      "receiptSizeBytes": 19833,
+      "receiptThumb": "/9j/2wCEAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk8BDg4OExETJhUVJk81LTVPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT//AABEIADIAMgMBIgACEQEDEQH/xAGiAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgsQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+gEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoLEQACAQIEBAMEBwUEBAABAncAAQIDEQQFITEGEkFRB2FxEyIygQgUQpGhscEJIzNS8BVictEKFiQ04SXxFxgZGiYnKCkqNTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqCg4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2dri4+Tl5ufo6ery8/T19vf4+fr/2gAMAwEAAhEDEQA/AO4vDDayKqaRJcBhndDEpA9jkiq/2uP/AKF68/78p/jWneWyXVuUaKOUjlRJnbn3xWZ/ZEv/AED9O/77f/CklErmfcPtcf8A0L15/wB+U/xo+1x/9C9ef9+U/wAaP7Il/wCgfp3/AH2/+FH9kS/9A/Tv++3/AMKOWIcz7h9rj/6F68/78p/jUkM8UsyRnQrmMMcF3hTavueaj/siX/oH6d/32/8AhV3T7AWxaRra3ikPAMJY8e+aLR7BzPuT/ZLX/n2h/wC+BR9ktf8An2h/74FTUUrIOZlDU7EXWx1iMki8YNw8Qx/wHrWQ1rAjlHFsrKcEHVpAR+lbtzNdxuotrMTqRyTMEwfTkVRa7lLEtploT3JuUz/KqRJn/Z7b1tP/AAbyUfZ7b1tP/BvJV/7VJ/0C7P8A8CY/8KPtUn/QLs//AAJj/wAKYFD7Pbetp/4N5Kv2GmBZ0meHaq/MjJeySAntwcAij7VJ/wBAuz/8CY/8KtW9zeuyA6eiRHjetwrAD6Ac0gL1FFFIY2QOY2ETKr4+UsMgH6VmHS5ickaYSf8Apy/+yqbULK7upUa21Oa0VVwVRAwY+vNVP7I1P/oYbr/vylMRL/Zc3ppn/gF/9lR/Zc3ppn/gF/8AZVF/ZGp/9DDdf9+Uo/sjU/8AoYbr/vylAEv9lzemmf8AgF/9lV60ilhi8uVoSAflEUewAfTJrM/sjU/+hhuv+/KVLb6ZqEVxHJLrlxMitlo2iUBh6UAatFFFIYUUUUAFFFFABRRRQAUUUUAf/9k=",
+      "recordedAt": "2026-06-08T22:36:04Z",
+      "recordedBy": "user_owen",
+      "recordedByName": "Owen O'Neill",
+      "vendor": "Belfast Honda Service"
+    },
+    {
+      "amountPence": 9800,
+      "bikeId": "bike_a1_manual_1",
+      "category": "parts",
+      "id": "bm_a1m1_tyres",
+      "notes": "Front tyre",
+      "occurredAt": "2026-04-28",
+      "receiptContentType": "image/jpeg",
+      "receiptSizeBytes": 19867,
+      "receiptThumb": "/9j/2wCEAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk8BDg4OExETJhUVJk81LTVPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT//AABEIADIAMgMBIgACEQEDEQH/xAGiAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgsQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+gEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoLEQACAQIEBAMEBwUEBAABAncAAQIDEQQFITEGEkFRB2FxEyIygQgUQpGhscEJIzNS8BVictEKFiQ04SXxFxgZGiYnKCkqNTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqCg4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2dri4+Tl5ufo6ery8/T19vf4+fr/2gAMAwEAAhEDEQA/AO3vBbWsiqmjPcBhndDChA9jkiq/2iH/AKFy6/78R/41qXlsl1blGijlI5USZ2598Vmf2RL/ANA/Tv8Avt/8Kak+4rIT7RD/ANC5df8AfiP/ABo+0Q/9C5df9+I/8aX+yJf+gfp3/fb/AOFH9kS/9A/Tv++3/wAKfM+4WQn2iH/oXLr/AL8R/wCNPhkglmSM6BPGGOC7wJtX3PNN/siX/oH6d/32/wDhV3T7AWxaRra3ikPAMJY8e+aXM+4WRL9hs/8An0g/79ij7DZ/8+kH/fsVYopcz7jsihqdiLrY6xGSReMG4eIY/wCA9ayGtYEco4tlZTgg6tICP0rduZruN1FtZidSOSZgmD6ciqLXcpYltMtCe5Nymf5UIDP+z23raf8Ag3ko+z23raf+DeSr/wBqk/6Bdn/4Ex/4UfapP+gXZ/8AgTH/AIUwKH2e29bT/wAG8lX7DTAs6TPDtVfmRkvZJAT24OARR9qk/wCgXZ/+BMf+FWre5vXZAdPRIjxvW4VgB9AOaQF6iiikMbIHMbCJlV8fKWGQD9KzDpcxOSNMJP8A05f/AGVTahZXd1KjW2pzWiquCqIGDH15qp/ZGp/9DDdf9+UpiJf7Lm9NM/8AAL/7Kj+y5vTTP/AL/wCyqL+yNT/6GG6/78pR/ZGp/wDQw3X/AH5SgCX+y5vTTP8AwC/+yq9aRSwxeXK0JAPyiKPYAPpk1mf2Rqf/AEMN1/35SpbfTNQiuI5JdcuJkVstG0SgMPSgDVooopDCiiigAooooAKKKKACiiigD//Z",
+      "recordedAt": "2026-06-08T22:36:04Z",
+      "recordedBy": "user_owen",
+      "recordedByName": "Owen O'Neill",
+      "vendor": "Phoenix Tyres"
+    },
+    {
+      "amountPence": 18900,
+      "bikeId": "bike_a1_manual_1",
+      "category": "service",
+      "id": "bm_a1m1_service",
+      "notes": "Annual service + new chain",
+      "occurredAt": "2026-03-08",
+      "receiptContentType": "image/jpeg",
+      "receiptSizeBytes": 19810,
+      "receiptThumb": "/9j/2wCEAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk8BDg4OExETJhUVJk81LTVPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT//AABEIADIAMgMBIgACEQEDEQH/xAGiAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgsQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+gEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoLEQACAQIEBAMEBwUEBAABAncAAQIDEQQFITEGEkFRB2FxEyIygQgUQpGhscEJIzNS8BVictEKFiQ04SXxFxgZGiYnKCkqNTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqCg4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2dri4+Tl5ufo6ery8/T19vf4+fr/2gAMAwEAAhEDEQA/AO5vHitZFVNJluAwzuhiUgexyRVf7Yn/AEL95/35T/GtK8tkurco0UcpHKiTO3Pvisz+yJf+gfp3/fb/AOFJJC5V2F+2J/0L95/35T/Gj7Yn/Qv3n/flP8aT+yJf+gfp3/fb/wCFH9kS/wDQP07/AL7f/CnZByrsL9sT/oX7z/vyn+NPhuY5ZkjOh3MYY4LvEm1fc81H/ZEv/QP07/vt/wDCrun2Ati0jW1vFIeAYSx4980WQcq7E/2W2/594v8AvgUfZbb/AJ94v++BU1FSHLHsUNTsRdbHWIySLxg3DxDH/AetZDWsCOUcWyspwQdWkBH6Vu3M13G6i2sxOpHJMwTB9ORVFruUsS2mWhPcm5TP8qpDM/7Pbetp/wCDeSj7Pbetp/4N5Kv/AGqT/oF2f/gTH/hR9qk/6Bdn/wCBMf8AhTAofZ7b1tP/AAbyVfsNMCzpM8O1V+ZGS9kkBPbg4BFH2qT/AKBdn/4Ex/4Vat7m9dkB09EiPG9bhWAH0A5pAXqKKKQxsgcxsImVXx8pYZAP0rMOlzE5I0wk/wDTl/8AZVNqFld3UqNbanNaKq4KogYMfXmqn9kan/0MN1/35SmIl/sub00z/wAAv/sqP7Lm9NM/8Av/ALKov7I1P/oYbr/vylH9kan/ANDDdf8AflKAJf7Lm9NM/wDAL/7Kr1pFLDF5crQkA/KIo9gA+mTWZ/ZGp/8AQw3X/flKlt9M1CK4jkl1y4mRWy0bRKAw9KANWiiikMKKKKACiiigAooooAKKKKAP/9k=",
+      "recordedAt": "2026-06-08T22:36:04Z",
+      "recordedBy": "user_owen",
+      "recordedByName": "Owen O'Neill",
+      "vendor": "Belfast Honda Service"
+    }
+  ],
+  "ytdPence": 35600
+}

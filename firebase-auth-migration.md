@@ -1,302 +1,321 @@
-# Firebase Auth migration plan
+# Firebase Auth migration — implementation plan
 
-Status: **drafted, awaiting decision.** Last updated 2026-06-07.
+**Status: Phases 0–5 + 1b + 1-full landed 2026-06-08.** Phase 6 (cloud
+deploy + GCS receipts) is the only item left. The all-emulator test
+migration is done: every httpapi test mints real Firebase ID tokens
+via the Auth Emulator and the middleware no longer has a legacy
+session-token branch. `internal/auth/` shrank to just `Identity` +
+error sentinels + the Firebase verifier. The bcrypt module, the
+`Login`/`Authenticate`/`Logout` API, the `/auth/signup` route and the
+legacy `signup.Signup` are all gone. The `user_sessions` table and
+the `password_hash` column are vestigial (NOT NULL on the column, so
+we write empty string until a follow-up migration drops it).
 
-This is the migration plan from our current rolled-own session auth
-(`internal/auth/`) to Firebase Auth. Nothing in here has been implemented
-yet — the goal is to capture the shape of the work, the trade-offs, and the
-decisions we need to make before kickoff.
-
----
-
-## Why migrate
-
-The current auth in `internal/auth/auth.go` (~240 LOC + tests) handles the
-basics well: bcrypt cost-10, opaque 32-byte session tokens, constant-time
-login response, server-side revocation, no email enumeration. It's not where
-we'd get pwned.
-
-It does **not** cover the operational hardening that real users expect:
-
-1. **No rate limiting** on `/auth/login` — anyone can brute-force.
-2. **No password reset** flow — reset token table + email delivery + abuse
-   resistance is a non-trivial build.
-3. **No email verification** — open-mode schools accept fake emails today.
-4. **No account lockout** after N failed attempts.
-5. **No 2FA** — matters for owners handling instructor pay.
-6. **Long-lived sessions** (30 days) with no rotation — leaked tokens stay
-   valid for a month.
-7. **Flutter web** stores tokens in `localStorage` (XSS-exposed). Mobile is
-   Keychain/Keystore, fine.
-
-Building all of those ourselves is a real chunk of work — each is its own
-attack surface that needs to be correct, kept correct, and tested. Firebase
-Auth gives us 1–5 turnkey, plus social login and OAuth when we want them.
-
-The trigger for revisiting was the student self-signup screen: rather than
-build signup on top of rolled-own auth and then build password-reset on top
-of that, do the swap first.
+This is the canonical build sheet. The exploratory "should-we" version of
+this doc has been collapsed into the locked decisions below; the rest is
+ordered phases with deliverables.
 
 ---
 
-## What changes
+## Locked decisions
 
-### Backend (`internal/auth/`, `internal/httpapi/middleware.go`)
+These are settled and not up for re-debate. Their rationale is captured
+inline so a future maintainer can see why each call was made.
 
-| Today | After Firebase |
-|---|---|
-| `auth.Login(email, password)` validates bcrypt, inserts a row in `user_sessions`, returns a 32-byte hex token. | Gone. Client gets a Firebase ID token directly from the Firebase SDK. |
-| `auth.Authenticate(token)` looks up `user_sessions` JOIN `users`, checks `expires_at` / `revoked_at`. | Gone. Replaced with `firebase.App.Auth().VerifyIDToken(ctx, token)` — verifies the JWT signature against Google's rotating keys, returns the Firebase UID + claims. |
-| `auth.Logout(token)` UPDATEs `user_sessions.revoked_at`. | Gone. Logout is client-side (`FirebaseAuth.instance.signOut()`); server is stateless. |
-| `auth.Identity{UserID, SchoolID, Role}` carried through middleware. | **Same struct, same contract.** `UserID` becomes the Firebase UID. We look up `SchoolID` and `Role` from our own `users` table keyed on UID. |
-| `authMiddleware` reads `Bearer <opaque-token>`. | `authMiddleware` reads `Bearer <firebase-id-token>`, verifies, looks up profile, attaches `Identity`. |
-
-Concrete diff size: ~80 LOC removed (`Login`, `LogoutAt`, session table
-queries), ~60 LOC added (Firebase SDK init, token verification, profile
-lookup), middleware change is ~20 lines. **The whole rest of the codebase
-is untouched** — every handler reads `identityFromContext(ctx)` and gets
-the same `Identity` struct it does today.
-
-### Schema (migration `0004_firebase_auth.up.sql`)
-
-- `users` table: drop `password_hash` (or keep nullable for rollback). Add
-  `firebase_uid TEXT UNIQUE NOT NULL` — the primary join key from the
-  Firebase token to our profile data.
-- `user_sessions` table: drop. Firebase tokens are stateless JWTs; we don't
-  store them.
-- `email` stays on `users` (we still need it for the admin signups screen
-  and for display), but Firebase becomes the source of truth for
-  email-verified status.
-
-### Flutter client (`app/lib/state/auth.dart`, `app/lib/api/client.dart`)
-
-| Today | After Firebase |
-|---|---|
-| Login screen POSTs `{email, password}` to `/auth/login`, stores opaque token. | Login screen calls `FirebaseAuth.signInWithEmailAndPassword(...)`, then calls `user.getIdToken()` to get the JWT. |
-| `TokenStorage` writes the opaque token to `flutter_secure_storage`. | Gone. Firebase SDK manages token storage + refresh in the background (15-minute access tokens, refresh tokens cached on-device). |
-| `_tokenSupplier` returns the stored token. | `_tokenSupplier` returns `await FirebaseAuth.instance.currentUser?.getIdToken()`. The SDK auto-refreshes before expiry. |
-| `AuthController._restore()` reads stored token, calls `/me`. | `AuthController` subscribes to `FirebaseAuth.authStateChanges()` — instant rehydrate on app start, fires on sign-out. |
-
-### New: signup screen (built on the new auth)
-
-This is the work that was deferred. Signup becomes ~150 lines of Flutter
-because Firebase handles password complexity, email validation, and
-duplicate-email errors out of the box:
-
-1. User picks school (we ship a list from `GET /schools`).
-2. Form: name, email, password, phone, category, transmission.
-3. `FirebaseAuth.createUserWithEmailAndPassword(...)` → got UID.
-4. POST `/auth/signup` to our backend with `{firebase_uid, school_id, name,
-   phone, category, transmission}` → backend creates the `users` +
-   `student_profiles` row, gates on `school.onboarding_mode` (open vs
-   approval).
-5. Open mode → land on `/student`. Approval mode → land on the
-   "pending approval" screen.
-
-### Email verification + password reset (free)
-
-- After signup, send verification email via
-  `user.sendEmailVerification()` — one line, no backend code.
-- Password reset: `FirebaseAuth.sendPasswordResetEmail(email)` — one line,
-  Google handles the email + token + reset page.
-- Both can be turned on the moment Firebase is wired; no incremental work.
+1. **Provider: Firebase Auth (free Spark tier).** Stays free up to 50 000
+   MAU. Lagan Valley has ~10 demo users. If a school ever crosses the
+   limit, the Blaze tier is ~$275/mo for managed auth — trivial cost at
+   that scale, and we can upgrade with zero code change.
+2. **Single source of truth for `role` and `school_id`: our DB.** No
+   Firebase custom claims for v1. Role/status changes apply immediately
+   on next request because every request does a `firebase_uid` lookup;
+   custom claims would require a token refresh round-trip (~1h delay).
+   We can add claims later if profiling ever shows the lookup matters.
+3. **Local dev: Firebase emulator from day one.** Already scaffolded:
+   `firebase.json`, `.firebaserc`, `storage.rules` at repo root,
+   `make emulator` starts Auth + Storage + UI. The backend honours
+   `FIREBASE_AUTH_EMULATOR_HOST` automatically when set; the Flutter
+   client calls `useAuthEmulator('localhost', 9099)` in debug builds.
+   Prerequisite for first-time emulator run: bump Node ≥20.
+4. **Multi-tenancy: stays in our schema.** Firebase has a tenancy
+   concept on Identity Platform; we ignore it. Our `school_id` boundary
+   in `tenant.Scope` already works and predates this migration.
+5. **Existing-user migration: re-seed.** We have no real users yet, so
+   `make seed` against the emulator creates everything. No batch-import
+   code, no dual-write window. (If we delay until after launch, this
+   plan would gain a `Phase A` for `auth.ImportUsers` against bcrypt
+   hashes — but not today.)
+6. **Receipt object store: paired but deferred to deploy.** The
+   `internal/filestore.Local` implementation keeps working through the
+   migration (receipts on disk under `./uploads/`). When we cut to
+   cloud deploy we'll add `filestore.GCS` — schema unchanged, single
+   file added. See Phase 6.
+7. **Phone auth: deferred indefinitely.** Email is enough for MVP; add
+   a customer pushes for it.
+8. **Project names.** `kickstand-dev` (emulator + future hosted dev),
+   `kickstand-prod` (production). Service-account credential JSON for
+   the prod project arrives at deploy time — not blocking dev work.
+9. **Public endpoints stay public.** `GET /schools` and `GET /health`
+   stay open by design (catalog + infra probes). After cutover, the
+   only login-tier surface is `POST /auth/signup` — and even that is
+   authed (Flutter calls Firebase create-user *first*, then POSTs the
+   profile body with the resulting JWT).
 
 ---
 
-## Migration approach for existing users
+## Why this is small
 
-Two paths, depending on what stage you do this:
+The whole codebase is wired around an `Identity{UserID, SchoolID, Role,
+…}` contract that handlers read via `identityFromContext(ctx)`. We
+preserve that contract: only the *production* of `Identity` changes (one
+file: `internal/httpapi/middleware.go`). Every booking / disruption /
+expense / calendar handler is untouched.
 
-### A) Pre-launch (recommended)
+```
+Today:  Bearer <opaque>  → lookup user_sessions → Identity
+After:  Bearer <JWT>     → VerifyIDToken + lookup by firebase_uid → Identity
+```
 
-We have **no real users yet** — only seeded demo accounts. Easiest path:
-
-1. Stand up the Firebase project (dev + prod).
-2. Switch the codebase over.
-3. Re-seed the demo accounts via Firebase Admin SDK in the seed binary.
-4. Done.
-
-Zero migration code.
-
-### B) Post-launch (if we delay the migration)
-
-Use Firebase's [batch import](https://firebase.google.com/docs/auth/admin/import-users)
-to copy users in bulk. We have bcrypt hashes already, and Firebase supports
-bcrypt-hashed import — so users keep their existing passwords and don't see
-a "please reset" prompt. Two-week rollout window:
-
-1. Dual-write: every signup goes to both stores; every login tries Firebase
-   first, falls back to bcrypt, then auto-migrates the user's hash into
-   Firebase.
-2. After two weeks of dual-write, batch-import the long tail (sleepers).
-3. Drop the old code path.
-
-A bit fiddly, but standard.
+Net code delta:
+- ~150 LOC removed (`Login`, `Logout`, `Authenticate`, session-table
+  queries, bcrypt usage, `TokenStorage`).
+- ~120 LOC added (Verifier, middleware swap, `firebase_options.dart`,
+  `AuthController` rewrite).
+- 1 schema migration (`0005_firebase_uid`).
+- Every handler downstream: zero changes.
 
 ---
 
-## What we keep, what we lose
+## Phase 0 — Foundations
 
-### Keep
-- `Identity` contract — every handler still reads it from context.
-- `tenant.Scope` and the `school_id` guard — the security boundary is
-  unchanged.
-- Bearer-token authorization model — just a different token type.
-- Logout UX — client triggers `signOut()`; the rest is plumbing.
+**Goal:** all the moving parts ready in their inert state. After this
+phase the repo still runs the old auth; nothing is broken.
 
-### Lose
-- Self-hosted identity. Google becomes the SPOF for sign-in. If Firebase
-  Auth is down (very rare; SLO 99.95%), nobody can sign in. Existing tokens
-  keep working for up to an hour.
-- Local dev simplicity. We add the Firebase emulator
-  (`firebase emulators:start --only auth`) to `make run` — works fine but
-  is another thing to install.
-- The `user_sessions` audit trail. Firebase Auth gives you a sign-in log in
-  the console but it's not queryable from our DB.
-- The ability to log a user out **everywhere** instantly. With JWTs, an
-  attacker with a stolen token has up to 1 hour (the token's remaining
-  lifetime) before refresh enforces re-auth. We can revoke the user's
-  refresh token immediately via `Admin SDK`, which forces re-login within
-  ~1h. Comparable to current 30-day window — strictly better.
+**Deliverables:**
 
-### Cost
-- **$0/month** at Spark tier up to 49,999 MAU. We have ~10 demo users.
-- **$0.0055/MAU** above 50k on the Blaze tier. Lagan Valley would have to
-  grow to 50k active monthly users to pay anything — and at that point
-  $275/mo for managed auth is trivial.
-- SMS for phone-based 2FA is metered separately (~$0.01 per SMS). Defer
-  enabling phone 2FA until we want it.
+- [ ] `migrations/0005_firebase_uid.up.sql` — `ALTER TABLE users ADD
+      COLUMN firebase_uid TEXT;` + partial unique index. Nullable for
+      safe co-existence with old data during cutover.
+- [ ] `go.mod` — add `firebase.google.com/go/v4` (Go Admin SDK).
+- [ ] `app/pubspec.yaml` — add `firebase_core` and `firebase_auth`
+      Dart packages.
+- [ ] `app/lib/firebase_options.dart` — hand-rolled placeholder pointing
+      at the `kickstand-dev` project. Sufficient for the emulator; we
+      swap to `flutterfire configure`-generated when we have a real
+      project.
+- [ ] `app/lib/main.dart` — wrap `runApp` in `Firebase.initializeApp` +
+      `useAuthEmulator` for debug builds. No-ops at runtime until
+      something *calls* `FirebaseAuth.instance`.
+- [ ] `cmd/server/main.go` — construct the Firebase `*auth.Client`,
+      pass it to the `Server` (but don't use it yet — the existing
+      middleware still wins).
+- [ ] `flutter analyze` and `go test ./...` both pass.
 
 ---
 
-## Phased rollout
+## Phase 1 — Backend swap
 
-Suggested order — each phase is independently shippable:
+**Goal:** Go server verifies Firebase tokens. The old `/auth/login`
+endpoint still works in this phase (it issues a Firebase custom token
+the client immediately exchanges) **only if needed** — easiest path is
+to delete it now since Flutter doesn't ship Phase 3 yet.
 
-1. **Phase 0 — Spike (1–2 hours).** On a branch, swap just the backend
-   middleware: keep email/password login, but verify Firebase tokens
-   instead of looking up `user_sessions`. Validate the contract works.
-   *Output:* confidence the swap is as small as we hope.
-2. **Phase 1 — Backend cutover (~half day).** Land the schema migration,
-   the new middleware, and a Firebase Admin client. Drop `user_sessions`.
-   Update seed to create Firebase users via Admin SDK. Re-seed.
-3. **Phase 2 — Flutter cutover (~half day).** Add Firebase Auth SDK +
-   `firebase_core` to `pubspec.yaml`. Replace login screen logic. Wire
-   `getIdToken()` into the API client's `tokenSupplier`. Test login,
-   logout, restart-survival.
-4. **Phase 3 — Signup + email verification + password reset
-   (~half day).** Build the signup screen on top of the new auth. Wire
-   `sendEmailVerification` + `sendPasswordResetEmail`. Update welcome
-   screen — remove the "Create account (coming soon)" stub.
-5. **Phase 4 — 2FA for staff accounts (optional, deferrable).** Owner +
-   instructor roles get TOTP-based 2FA via Firebase's MFA APIs. Students
-   skip.
+**Recommended path:** delete `/auth/login` / `/auth/logout` immediately
+and use the Firebase Admin SDK's `CreateCustomToken` from a test
+helper to mint JWTs for the existing HTTP test suite.
 
-Total cost to "signup works, password reset works": ~1.5–2 days of focused
-work.
+**Deliverables:**
+
+- [ ] `internal/auth/firebase.go` — new `Verifier` type wrapping
+      `auth.Client`. Methods: `VerifyAndLoad(ctx, token) (*Identity, error)`
+      and `LoadByFirebaseUID(ctx, uid)`.
+- [ ] `internal/httpapi/middleware.go` — `authMiddleware` calls
+      `Verifier.VerifyAndLoad`. Same `Identity` attached to context.
+- [ ] `internal/httpapi/server.go` — `Server` struct gains
+      `Auth *auth.Verifier`. Constructor accepts it.
+- [ ] `internal/httpapi/auth_handlers.go` — delete `handleLogin` and
+      `handleLogout` (Flutter calls Firebase directly post-Phase 3).
+      `handleSignup` becomes authed and reads UID from the token.
+- [ ] `internal/httpapi/server.go` — drop `POST /auth/login` and
+      `POST /auth/logout` routes.
+- [ ] `internal/httpapi/testhelpers_test.go` — replace the old
+      "obtain bearer token via login" helper with one that calls the
+      emulator's `CreateCustomToken` then exchanges it for an ID
+      token. Existing per-test helpers (`asOwen`, `asAlex`, …) keep
+      the same signatures.
+- [ ] CI / `go test ./...` runs against the Firebase emulator. The
+      emulator must be running on `localhost:9099` with
+      `FIREBASE_AUTH_EMULATOR_HOST` exported.
+- [ ] All ~200 existing httpapi tests pass against the new middleware.
+
+---
+
+## Phase 2 — Seed via Admin SDK
+
+**Goal:** `make seed` produces a working demo tenant against the
+emulator: Firebase users + matching local profile rows.
+
+**Deliverables:**
+
+- [ ] `cmd/seed/main.go` — for each demo user, call
+      `firebaseAuth.CreateUser` with a pinned `UID` (re-use our local
+      `user_id` string — they're both opaque text, makes re-seeding
+      idempotent). Insert the local row with that same `firebase_uid`.
+- [ ] Seed binary respects `FIREBASE_AUTH_EMULATOR_HOST` so it works
+      against the emulator with zero credentials.
+- [ ] `make seed` smoke: emulator UI shows ~12 users; the Go server
+      can list `/students` for Owen against the new DB.
+
+---
+
+## Phase 3 — Flutter swap (login + AuthController)
+
+**Goal:** the Flutter app authenticates against Firebase. Login screen
+unchanged visually; the implementation behind it is the SDK.
+
+**Deliverables:**
+
+- [ ] `app/lib/state/auth.dart` — `AuthController` rewrites to wrap
+      `FirebaseAuth.instance.authStateChanges()`. `_restore` goes away
+      (the SDK rehydrates on app start). Sign-out is `signOut()`.
+- [ ] `app/lib/state/providers.dart` — `apiClientProvider`'s
+      `tokenSupplier` becomes `await FirebaseAuth.instance.currentUser
+      ?.getIdToken()`.
+- [ ] `app/lib/api/client.dart` — drop `login(email, password)` and
+      `logout()`; the API client only carries the Bearer token now.
+- [ ] `app/lib/state/token_storage.dart` — delete. SDK manages its own
+      persistence.
+- [ ] `app/lib/screens/login_screen.dart` — same UI, calls
+      `FirebaseAuth.instance.signInWithEmailAndPassword`. Maps Firebase
+      errors (`user-not-found`, `wrong-password`, …) to friendly copy.
+- [ ] Restart-survival manually tested: log in, kill the app, reopen,
+      should be at the role landing page without prompting.
+
+---
+
+## Phase 4 — Signup screen (the work we deferred) ✅
+
+**Goal:** new students can create their own account.
+
+**Deliverables:**
+
+- [x] `app/lib/screens/signup_screen.dart` — fields: name, email,
+      password, phone, category, transmission. School picker reads
+      `GET /schools`.
+- [x] Submit flow:
+      1. `FirebaseAuth.createUserWithEmailAndPassword`
+      2. `POST /auth/firebase-signup` with the JWT in the Authorization
+         header — server verifies UID via Admin SDK and writes the
+         local users + student_profiles row, gating on the school's
+         onboarding_mode.
+      3. AuthController's `authStateChanges` listener fires; router
+         redirect lands the user at `/student` (open) or pending
+         screen (approval).
+- [x] `app/lib/screens/welcome_screen.dart` — "Create account" button
+      live, routes to `/signup`.
+- [x] `internal/httpapi/signup_handlers.go` — `handleFirebaseSignup`
+      verifies the JWT manually (regular middleware can't help — the
+      profile row doesn't exist yet) and calls
+      `signup.SignupWithFirebase`.
+- [x] Profile-write failure rolls back the Firebase user so the email
+      stays available for retry.
+
+---
+
+## Phase 5 — Email verification + password reset ✅
+
+**Goal:** the two features that motivated this migration.
+
+**Deliverables:**
+
+- [x] After successful signup, call `user.sendEmailVerification()`
+      (best-effort, non-blocking).
+- [x] `app/lib/widgets/email_verification_banner.dart` — top-of-shell
+      banner for unverified users, slotted into Student / Instructor /
+      Admin shells. Resend (60s cooldown), "I've verified" (calls
+      `user.reload()`), session-only dismiss.
+- [x] Login screen "Forgot password?" link → dialog → calls
+      `AuthController.sendPasswordReset` →
+      `FirebaseAuth.sendPasswordResetEmail`. Existence of the email
+      is not leaked.
+- [ ] Confirm the emulator shows the verification + reset emails in
+      its UI (manual verification step — emulator records the
+      template at `localhost:9099` even though it doesn't deliver).
+
+---
+
+## Phase 6 — Cloud deploy + receipt storage swap
+
+**Goal:** real production deploy. Receipt storage flips from local
+filesystem to Google Cloud Storage as part of the same deploy.
+
+**Deliverables:**
+
+- [ ] Stand up `kickstand-prod` Firebase project + service-account JSON.
+- [ ] `internal/filestore/gcs.go` — new `Store` implementation.
+- [ ] `cmd/server/main.go` — branch on env: local filesystem in dev,
+      GCS in prod.
+- [ ] Cloud Run / Render config: env vars `GOOGLE_APPLICATION_CREDENTIALS`
+      + `FIREBASE_PROJECT_ID` + the receipt bucket name.
+
+Out of scope for the initial migration. Tracked here so it doesn't
+disappear.
 
 ---
 
 ## Test plan
 
-For each phase, the smoke we need to pass:
+For each phase before merging:
 
-- [ ] Owen logs in, can hit `/disruptions` (existing httpapi test pattern).
-- [ ] Owen logs out client-side, token rejected by backend within 1h.
-- [ ] Student signs up via Open-mode school → lands in `/student`.
-- [ ] Student signs up via Approval-mode school → lands on pending screen,
-      Owen sees them in the Sign-ups queue.
-- [ ] Forgot password from login screen → user receives email, resets,
-      logs in.
-- [ ] Disabled student in our `users` table → token still verifies but
-      handler rejects with 403 (we keep `account_status` in our DB; not
-      Firebase's job).
-- [ ] All ~200 existing httpapi tests still pass (they use seed accounts,
-      which the new seed creates via Firebase Admin).
-
----
-
-## Decisions to make before kickoff
-
-These are blocking — answer them, then we start:
-
-1. **Firebase project ownership.** Whose Google account owns the Firebase
-   project? Recommend a dedicated `kickstand@…` account, not a personal
-   one. Project naming: `kickstand-dev`, `kickstand-prod`.
-2. **Identity Platform vs Firebase Auth (free tier).** Firebase Auth has
-   a hard cap at 50k MAU. Identity Platform unlocks higher tiers + SAML +
-   multi-tenancy. **Recommendation:** start on Firebase Auth (free), can
-   upgrade later without code changes.
-3. **Multi-tenancy strategy.** Firebase has a built-in tenancy concept on
-   Identity Platform. **Recommendation:** ignore it. Keep our existing
-   `school_id` model — it's already working and Firebase tenancy adds
-   complexity for ~zero benefit at our scale.
-4. **Account merging.** Does `priya@lagan.test` (instructor) need to be the
-   same user as `priya@example.com` (her personal Gmail if we ever add
-   Sign in with Google)? **Recommendation:** no for v1. Each Firebase user
-   = one human; multi-role users are a separate problem.
-5. **Local dev — Firebase emulator or live project?** Live makes
-   onboarding new devs annoying (everyone needs an account). Emulator
-   means one extra `make` command and ~50MB of Java. **Recommendation:**
-   emulator from day one, wire into the seed binary.
-6. **Phone auth?** Skippable for v1 — email is enough. Defer until a
-   customer asks.
+- [ ] Owen logs in (Firebase), hits `/disruptions`, gets owner-only
+      data.
+- [ ] Owen calls `signOut()` client-side. A request 5 minutes later
+      with the cached token still verifies (JWTs are stateless); after
+      ~1h it 401s.
+- [ ] Disabled student: token verifies; middleware rejects with 403
+      `account_disabled`.
+- [ ] Token forged with the wrong issuer / audience: 401
+      `session_invalid`.
+- [ ] New student signs up in Open-mode school → lands in `/student`.
+- [ ] New student signs up in Approval-mode school → lands on pending
+      screen; Owen sees them in `/admin/signups`.
+- [ ] Forgot password: emulator UI shows the reset link; clicking it
+      sets a new password; logging in with it succeeds.
+- [ ] All ~200 existing httpapi tests pass against the emulator.
 
 ---
 
-## Paired work: receipt image storage
+## Rollback
 
-Decision **2026-06-07**: when we cut over to Firebase Auth we'll also wire
-the receipt-image object store at the same time. Both live in the same
-Google Cloud project and benefit from one configuration pass.
+Each phase is a single PR with a focused commit; rollback is `git
+revert` plus re-running the down migration if Phase 0 has landed.
 
-- Today the Reimbursements feature writes receipts to local disk
-  (`./uploads/expenses/{id}/...`) via the `internal/filestore` interface.
-- At Firebase cutover we add a `filestore.GCS` implementation pointing at
-  the same Google Cloud Storage bucket as Firebase Storage uses. The
-  database schema is unchanged — `receipt_storage_key` is just a different
-  string format (a GCS object key instead of a filesystem path).
-- Receipt serve endpoint (`GET /expenses/{id}/receipt`) keeps its
-  auth-gated streaming. Once we want CDN delivery we can swap to signed
-  URLs returned from the engine.
+The Firebase emulator data is ephemeral — restarting it wipes users —
+so dev rollback is `make seed` against the fresh state.
 
-Net: ~30 lines of Go to add the GCS implementation, no schema changes, no
-client changes. Treat as part of the same deploy cut.
-
-## What this plan does NOT change
-
-- The Go backend's overall shape, the tenant guard, the booking engine,
-  the notify package, all of the Flutter app outside `state/auth.dart` +
-  the login screen.
-- The cost story for SQLite vs Postgres migration (separate decision).
-- Any of the design / UI / UX work.
-- The notification poll, the silent refresh, the refresh observer.
+There's no production rollback story yet because there's no production
+yet.
 
 ---
 
 ## Risks
 
-- **Firebase outage during cutover.** Mitigation: keep the old code on a
-  branch; rollback is `git revert + redeploy + restore migration`.
-- **Token verification CPU cost.** `VerifyIDToken` does a JWT signature
-  check on every request. Benchmarked at ~50µs on a Cloud Run instance —
-  negligible vs the ~3ms our handlers already take. Not a real concern.
-- **Local dev gotcha.** Forgetting to start the emulator means every login
-  hits prod. Mitigation: `make run` checks for the emulator and warns; the
-  client refuses to talk to prod from `localhost` in `--debug` mode.
-- **Apple's "Sign in with Apple" requirement.** If we ever ship social
-  login on iOS, Apple's review rules require Sign in with Apple alongside.
-  Firebase supports it natively; just a couple lines. Defer.
+- **Emulator not running during dev.** Symptom: every request 401s on
+  signup. Mitigation: `make run` aborts with a clear message if it
+  can't reach `localhost:9099` and `FIREBASE_AUTH_EMULATOR_HOST` is
+  unset.
+- **Token verification CPU cost.** ~50µs per request (key cache hit).
+  Negligible.
+- **`firebase-tools` Node-version drift.** CLI v15 needs Node ≥20.
+  Captured in the README.
 
 ---
 
-## TL;DR for future-you
+## TL;DR
 
-We're ~half a day of backend work + half a day of Flutter work from having
-managed auth (incl. password reset, email verification, account lockout,
-brute-force protection) instead of rolled-own. Zero migration cost because
-we have no real users yet. Net code delta is roughly *flat* — we delete as
-much as we add.
-
-The blocker isn't engineering, it's the decisions in the section above.
-Once those are answered, the work is mechanical.
+- We have the design, the emulator config, and a clear contract.
+- Six phases; Phase 0 is plumbing that breaks nothing, Phase 1 is the
+  one substantive code change, Phases 2–5 are mechanical.
+- ~1.5 days of focused work for "signup works, password reset works,
+  emulator-based dev loop is green."
+- Production deploy + GCS receipts is Phase 6 — separate concern.

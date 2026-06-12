@@ -1,0 +1,44 @@
+{
+  "slots": [
+    {
+      "endsAtLocal": "17:00",
+      "id": "avail_dave_mon",
+      "instructorId": "user_instr_dave",
+      "locationId": "loc_belfast",
+      "startsAtLocal": "09:00",
+      "weekday": 1
+    },
+    {
+      "endsAtLocal": "17:00",
+      "id": "avail_dave_tue",
+      "instructorId": "user_instr_dave",
+      "locationId": "loc_belfast",
+      "startsAtLocal": "09:00",
+      "weekday": 2
+    },
+    {
+      "endsAtLocal": "17:00",
+      "id": "avail_dave_wed",
+      "instructorId": "user_instr_dave",
+      "locationId": "loc_belfast",
+      "startsAtLocal": "09:00",
+      "weekday": 3
+    },
+    {
+      "endsAtLocal": "17:00",
+      "id": "avail_dave_thu",
+      "instructorId": "user_instr_dave",
+      "locationId": "loc_belfast",
+      "startsAtLocal": "09:00",
+      "weekday": 4
+    },
+    {
+      "endsAtLocal": "17:00",
+      "id": "avail_dave_fri",
+      "instructorId": "user_instr_dave",
+      "locationId": "loc_belfast",
+      "startsAtLocal": "09:00",
+      "weekday": 5
+    }
+  ]
+}

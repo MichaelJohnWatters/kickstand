@@ -34,6 +34,7 @@ type (
 	ExpenseID        string
 	ExpenseCategoryID string
 	UserSessionToken string
+	WaitlistID       string
 )
 
 // NewID returns a fresh UUIDv4 as a string. Kept as a single seam so we can

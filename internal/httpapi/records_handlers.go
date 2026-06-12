@@ -450,6 +450,124 @@ func (s *Server) handleGetStudentDetail(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// GET /followups — staff cross-school list of open follow-ups +
+// open/overdue counts. One round-trip powers both the /admin/incidents
+// list and the Overview "Needs attention" badge.
+func (s *Server) handleListOpenFollowups(w http.ResponseWriter, r *http.Request) {
+	id, _ := identityFromContext(r.Context())
+	if id.Role == domain.RoleStudent {
+		writeError(w, http.StatusForbidden, "forbidden", "staff only")
+		return
+	}
+	scope := tenant.NewScope(s.DB, id.SchoolID)
+	rows, err := records.ListOpenFollowups(r.Context(), scope)
+	if err != nil {
+		writeRecordsError(w, err)
+		return
+	}
+	counts, err := records.CountOpenFollowups(r.Context(), scope)
+	if err != nil {
+		writeRecordsError(w, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(rows))
+	for _, ro := range rows {
+		out = append(out, map[string]any{
+			"id":                  ro.ID,
+			"incidentId":          ro.IncidentID,
+			"kind":                ro.Kind,
+			"description":         ro.Description,
+			"dueOn":               ro.DueOn,
+			"notes":               ro.Notes,
+			"incidentOccurredAt":  ro.IncidentOccurredAt,
+			"incidentDescription": ro.IncidentDescription,
+			"studentId":           ro.StudentID,
+			"studentName":         ro.StudentName,
+			"bikeId":              ro.BikeID,
+			"bikeLabel":           ro.BikeLabel,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"followups": out,
+		"counts": map[string]any{
+			"open":    counts.Open,
+			"overdue": counts.Overdue,
+		},
+	})
+}
+
+// GET /incidents/{id}/followups — staff list of follow-up actions.
+func (s *Server) handleListIncidentFollowups(w http.ResponseWriter, r *http.Request) {
+	id, _ := identityFromContext(r.Context())
+	if id.Role == domain.RoleStudent {
+		writeError(w, http.StatusForbidden, "forbidden", "staff only")
+		return
+	}
+	scope := tenant.NewScope(s.DB, id.SchoolID)
+	out, err := records.ListFollowups(r.Context(), scope,
+		domain.IncidentID(r.PathValue("id")))
+	if err != nil {
+		writeRecordsError(w, err)
+		return
+	}
+	rows := make([]map[string]any, 0, len(out))
+	for _, f := range out {
+		row := map[string]any{
+			"id":          f.ID,
+			"incidentId":  f.IncidentID,
+			"kind":        f.Kind,
+			"description": f.Description,
+			"dueOn":       f.DueOn,
+			"notes":       f.Notes,
+			"done":        f.IsDone(),
+		}
+		if f.IsDone() {
+			row["doneAt"] = f.DoneAt
+			row["doneBy"] = f.DoneBy
+		}
+		rows = append(rows, row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"followups": rows})
+}
+
+// POST /followups/{id}/done — staff mark a follow-up as handled.
+// Optional `notes` body field captures what was done.
+func (s *Server) handleCompleteFollowup(w http.ResponseWriter, r *http.Request) {
+	id, _ := identityFromContext(r.Context())
+	if id.Role == domain.RoleStudent {
+		writeError(w, http.StatusForbidden, "forbidden", "staff only")
+		return
+	}
+	scope := tenant.NewScope(s.DB, id.SchoolID)
+	var req struct {
+		Notes string `json:"notes"`
+	}
+	if r.ContentLength > 0 {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	if err := records.MarkFollowupDone(r.Context(), scope,
+		r.PathValue("id"), id.UserID, req.Notes); err != nil {
+		writeRecordsError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /followups/{id}/reopen — undo a "done" mark.
+func (s *Server) handleReopenFollowup(w http.ResponseWriter, r *http.Request) {
+	id, _ := identityFromContext(r.Context())
+	if id.Role == domain.RoleStudent {
+		writeError(w, http.StatusForbidden, "forbidden", "staff only")
+		return
+	}
+	scope := tenant.NewScope(s.DB, id.SchoolID)
+	if err := records.ReopenFollowup(r.Context(), scope, r.PathValue("id")); err != nil {
+		writeRecordsError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // Keep the instructorpay import live (used by the aggregate's neighbours in
 // other files); silences the unused-import false-positive if you trim
 // references during refactors.

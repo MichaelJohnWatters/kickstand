@@ -12,6 +12,7 @@ import 'package:intl/intl.dart';
 import '../state/providers.dart';
 import '../theme/theme.dart';
 import '../theme/tokens.dart';
+import '../widgets/empty_state.dart';
 
 final _logisticsDateProvider = StateProvider.autoDispose<DateTime>((_) =>
     DateTime.now().add(const Duration(days: 1)));
@@ -48,7 +49,7 @@ class AdminLogisticsScreen extends ConsumerWidget {
               padding: EdgeInsets.symmetric(vertical: 32),
               child: Center(child: CircularProgressIndicator(color: KsColors.primary)),
             ),
-            error: (e, _) => Text('Couldn’t load.\n$e'),
+            error: (e, _) => KsEmptyState.error(message: e.toString()),
             data: (data) {
               final totalMoves = data['totalMoves'] ?? 0;
               final destinations = ((data['destinations'] as List?) ?? const []).cast<Map<String, dynamic>>();

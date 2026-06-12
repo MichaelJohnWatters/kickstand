@@ -1,0 +1,11 @@
+{
+  "timeOff": [
+    {
+      "endsAt": "2026-06-27T22:36:04Z",
+      "id": "off_dave_hols",
+      "instructorId": "user_instr_dave",
+      "reason": "Family holiday",
+      "startsAt": "2026-06-22T22:36:04Z"
+    }
+  ]
+}
