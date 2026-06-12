@@ -1809,10 +1809,10 @@ class _BlockBody extends StatelessWidget {
 /// Family-keyed by session id so two open dialogs don't fight over
 /// the same future. autoDispose keeps the surface clean once the
 /// dialog closes.
-final sessionWaitlistCountProvider =
-    FutureProvider.autoDispose.family<int, String>((ref, sessionId) async {
-  final res = await ref.read(apiClientProvider).listSessionWaitlist(sessionId);
-  return res.count;
+final sessionWaitlistProvider = FutureProvider.autoDispose
+    .family<({List<Map<String, dynamic>> entries, int count}), String>(
+        (ref, sessionId) async {
+  return ref.read(apiClientProvider).listSessionWaitlist(sessionId);
 });
 
 class _SessionDetailDialog extends ConsumerWidget {
@@ -1831,7 +1831,7 @@ class _SessionDetailDialog extends ConsumerWidget {
     // Only spend the call when the seat is actually contested — a
     // half-empty session doesn't need a waitlist row.
     final waitlistAsync = (sessionId.isNotEmpty && active >= capacity)
-        ? ref.watch(sessionWaitlistCountProvider(sessionId))
+        ? ref.watch(sessionWaitlistProvider(sessionId))
         : null;
     return Dialog(
       child: ConstrainedBox(
@@ -1866,12 +1866,9 @@ class _SessionDetailDialog extends ConsumerWidget {
                 waitlistAsync.when(
                   loading: () => _row(Icons.hourglass_top_outlined, 'Loading waitlist…'),
                   error: (_, __) => const SizedBox.shrink(),
-                  data: (n) => n == 0
+                  data: (data) => data.count == 0
                       ? const SizedBox.shrink()
-                      : _row(
-                          Icons.hourglass_top_outlined,
-                          '$n on the waitlist — first will be booked when a seat opens.',
-                        ),
+                      : _WaitlistList(sessionId: sessionId, entries: data.entries),
                 ),
               const SizedBox(height: 16),
               Row(children: [
@@ -1963,6 +1960,133 @@ class _SessionDetailDialog extends ConsumerWidget {
           Expanded(child: Text(text, style: const TextStyle(color: KsColors.ink2, fontSize: 13))),
         ]),
       );
+}
+
+class _WaitlistList extends ConsumerWidget {
+  final String sessionId;
+  final List<Map<String, dynamic>> entries;
+  const _WaitlistList({required this.sessionId, required this.entries});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6, top: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const Icon(Icons.hourglass_top_outlined,
+                color: KsColors.ink3, size: 16),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '${entries.length} on the waitlist — first will be booked when a seat opens.',
+                style: const TextStyle(color: KsColors.ink2, fontSize: 13),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 6),
+          for (final e in entries)
+            Padding(
+              padding: const EdgeInsets.only(left: 24, top: 2),
+              child: Row(children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: KsColors.primaryTint,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text('#${e['position'] ?? '?'}',
+                      style: const TextStyle(
+                          color: KsColors.primary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 11)),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    (e['studentName'] ?? e['studentId'] ?? '').toString(),
+                    style:
+                        const TextStyle(color: KsColors.ink, fontSize: 13),
+                  ),
+                ),
+                _WaitlistRemoveButton(
+                  sessionId: sessionId,
+                  entryId: (e['id'] ?? '').toString(),
+                  studentName: (e['studentName'] ?? '').toString(),
+                ),
+              ]),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WaitlistRemoveButton extends ConsumerStatefulWidget {
+  final String sessionId;
+  final String entryId;
+  final String studentName;
+  const _WaitlistRemoveButton({
+    required this.sessionId,
+    required this.entryId,
+    required this.studentName,
+  });
+
+  @override
+  ConsumerState<_WaitlistRemoveButton> createState() =>
+      _WaitlistRemoveButtonState();
+}
+
+class _WaitlistRemoveButtonState
+    extends ConsumerState<_WaitlistRemoveButton> {
+  bool _removing = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: 'Remove ${widget.studentName}',
+      icon: _removing
+          ? const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.close, size: 16, color: KsColors.ink3),
+      onPressed: _removing ? null : _remove,
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  Future<void> _remove() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove from waitlist?'),
+        content: Text('Remove ${widget.studentName} from this session\'s waitlist? They won\'t be auto-booked when a seat opens.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() => _removing = true);
+    try {
+      await ref
+          .read(apiClientProvider)
+          .removeWaitlistEntry(widget.sessionId, widget.entryId);
+      ref.invalidate(sessionWaitlistProvider(widget.sessionId));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Couldn't remove: $e")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _removing = false);
+    }
+  }
 }
 
 // ---------- Edit session sheet ----------

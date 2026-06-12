@@ -1698,6 +1698,44 @@ class FunnelStats {
       );
 }
 
+/// One waitlist entry from /me/waitlist. The server denormalises
+/// session details so the student-facing card can render without an
+/// N+1 fetch per row.
+class MyWaitlistEntry {
+  final String id;
+  final String sessionId;
+  final DateTime joinedAt;
+  final int position; // 1-based
+  final DateTime sessionStartsAt;
+  final String courseCode;
+  final String courseName;
+  final String courseAccent;
+  final String locationName;
+  const MyWaitlistEntry({
+    required this.id,
+    required this.sessionId,
+    required this.joinedAt,
+    required this.position,
+    required this.sessionStartsAt,
+    required this.courseCode,
+    required this.courseName,
+    required this.courseAccent,
+    required this.locationName,
+  });
+  factory MyWaitlistEntry.fromJson(Map<String, dynamic> j) => MyWaitlistEntry(
+        id: j['id'] ?? '',
+        sessionId: j['sessionId'] ?? '',
+        joinedAt: DateTime.tryParse(j['joinedAt'] ?? '') ?? DateTime.now(),
+        position: (j['position'] as num?)?.toInt() ?? 0,
+        sessionStartsAt:
+            DateTime.tryParse(j['sessionStartsAt'] ?? '') ?? DateTime.now(),
+        courseCode: j['courseCode'] ?? '',
+        courseName: j['courseName'] ?? '',
+        courseAccent: j['courseAccent'] ?? '',
+        locationName: j['locationName'] ?? '',
+      );
+}
+
 /// Per-category notification preferences. One row per category;
 /// channel flags indicate which delivery channels are subscribed.
 /// Defaults: in_app/email/push on, sms off (paid channel never

@@ -276,6 +276,15 @@ All sidebar items live:
   `notify.insertNotification` honours in-app prefs immediately; email/push/SMS
   flips are stored and switch on automatically when those channels light up
   (FCM phase 2). Migration 0026 added `notification_prefs`.
+- **Waitlist UI** — student-side: My Bookings now shows an "On the waitlist"
+  section above the segmented control listing every session the student is
+  queueing for (course code stripe, session time, location, position pill,
+  inline Leave action). Backed by `myWaitlistProvider`; `/me/waitlist` now
+  enriches each row with denormalised session + course + location so the
+  card renders without N+1 fetches. Admin-side: master calendar session
+  detail expands the waitlist count into a queue list (position pill +
+  student name + remove ✕ per row); `DELETE /sessions/{id}/waitlist/{entryId}`
+  is staff-only and does NOT fire auto-promotion (no seat was freed).
 
 ---
 

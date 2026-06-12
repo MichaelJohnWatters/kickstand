@@ -537,11 +537,18 @@ class ApiClient {
   }
 
   /// GET /me/waitlist — entries owned by the calling student.
-  Future<List<Map<String, dynamic>>> listMyWaitlist() async {
+  Future<List<MyWaitlistEntry>> listMyWaitlist() async {
     final res = await _send('GET', '/me/waitlist');
-    return ((res.data as Map<String, dynamic>)['entries'] as List? ??
-            const [])
-        .cast<Map<String, dynamic>>();
+    return ((res.data as Map<String, dynamic>)['entries'] as List? ?? const [])
+        .map((e) => MyWaitlistEntry.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// DELETE /sessions/{id}/waitlist/{entryId} — staff-only removal of
+  /// a specific entry. Differs from leaveSessionWaitlist (which is the
+  /// student's self-leave path).
+  Future<void> removeWaitlistEntry(String sessionId, String entryId) async {
+    await _send('DELETE', '/sessions/$sessionId/waitlist/$entryId');
   }
 
   /// GET /sessions/{id}/waitlist — staff enumeration of the queue for

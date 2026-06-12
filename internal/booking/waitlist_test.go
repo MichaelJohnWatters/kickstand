@@ -149,3 +149,47 @@ func TestWaitlist_DuplicateJoinRejected(t *testing.T) {
 		t.Fatalf("expected ErrAlreadyOnWaitlist, got %v", err)
 	}
 }
+
+func TestWaitlist_AdminRemoveByEntry(t *testing.T) {
+	f := newFixture(t)
+	addA1Bike(t, f, "bike_a1_second")
+	// Fill the session.
+	if _, err := f.book(booking.Request{SessionID: f.sessionID, StudentID: f.studentA}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.book(booking.Request{SessionID: f.sessionID, StudentID: f.studentB}); err != nil {
+		t.Fatal(err)
+	}
+	// Third student joins the waitlist.
+	if _, err := f.db.Exec(`INSERT INTO users (id, school_id, email, password_hash, name, role, account_status, created_at)
+	                       VALUES ('user_stu_d', ?, ?, '', 'D', 'student', 'active', ?)`,
+		f.schoolID, "d@t", f.now.Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.Exec(`INSERT INTO student_profiles (user_id, school_id, cbt_certificate_held, theory_passed)
+	                       VALUES ('user_stu_d', ?, 0, 0)`, f.schoolID); err != nil {
+		t.Fatal(err)
+	}
+	clock := func() time.Time { return f.now }
+	entry, err := booking.JoinWaitlistAt(context.Background(), f.scope, f.sessionID, "user_stu_d", clock)
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+
+	// Admin pulls them off without freeing a seat.
+	if err := booking.RemoveFromWaitlistByEntry(context.Background(), f.scope, f.sessionID, entry.ID); err != nil {
+		t.Fatalf("RemoveFromWaitlistByEntry: %v", err)
+	}
+	remaining, err := booking.ListWaitlist(context.Background(), f.scope, f.sessionID)
+	if err != nil {
+		t.Fatalf("ListWaitlist: %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Errorf("expected empty waitlist after removal, got %d entries", len(remaining))
+	}
+
+	// Second removal is a not-found.
+	if err := booking.RemoveFromWaitlistByEntry(context.Background(), f.scope, f.sessionID, entry.ID); err == nil {
+		t.Errorf("expected error on removing already-removed entry, got nil")
+	}
+}

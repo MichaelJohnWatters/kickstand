@@ -132,11 +132,34 @@ func (s *Server) handleMyWaitlist(w http.ResponseWriter, r *http.Request) {
 	rows := make([]map[string]any, 0, len(out))
 	for _, e := range out {
 		rows = append(rows, map[string]any{
-			"id":        e.ID,
-			"sessionId": e.SessionID,
-			"joinedAt":  e.JoinedAt.UTC(),
-			"position":  e.Position,
+			"id":              e.ID,
+			"sessionId":       e.SessionID,
+			"joinedAt":        e.JoinedAt.UTC(),
+			"position":        e.Position,
+			"sessionStartsAt": e.SessionStartsAt.UTC(),
+			"courseCode":      e.CourseCode,
+			"courseName":      e.CourseName,
+			"courseAccent":    e.CourseAccent,
+			"locationName":    e.LocationName,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"entries": rows})
+}
+
+// DELETE /sessions/{id}/waitlist/{entryId} — staff-only removal of a
+// specific waitlist entry. No auto-promotion (no seat opened up).
+func (s *Server) handleRemoveWaitlistEntry(w http.ResponseWriter, r *http.Request) {
+	id, _ := identityFromContext(r.Context())
+	if id.Role == domain.RoleStudent {
+		writeError(w, http.StatusForbidden, "forbidden", "staff only")
+		return
+	}
+	scope := tenant.NewScope(s.DB, id.SchoolID)
+	sessionID := domain.SessionID(r.PathValue("id"))
+	entryID := domain.WaitlistID(r.PathValue("entryId"))
+	if err := booking.RemoveFromWaitlistByEntry(r.Context(), scope, sessionID, entryID); err != nil {
+		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

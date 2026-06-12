@@ -45,6 +45,7 @@ void refreshStudentTab(WidgetRef ref, String routePrefix) {
   } else if (routePrefix.startsWith('/student/bookings')) {
     ref.invalidate(myBookingsProvider('upcoming'));
     ref.invalidate(myBookingsProvider('past'));
+    ref.invalidate(myWaitlistProvider);
   } else if (routePrefix.startsWith('/student/progress')) {
     ref.invalidate(myProgressProvider);
   } else if (routePrefix.startsWith('/student/licence')) {
@@ -242,6 +243,7 @@ class _RefreshObserverState extends ConsumerState<RefreshObserver>
       case 'booking':
         ref.invalidate(myBookingsProvider('upcoming'));
         ref.invalidate(myBookingsProvider('past'));
+        ref.invalidate(myWaitlistProvider);
         ref.invalidate(scheduleSessionsProvider);
         ref.invalidate(sessionsProvider);
         ref.invalidate(fleetProvider);

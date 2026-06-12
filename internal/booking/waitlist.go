@@ -20,6 +20,9 @@ var (
 )
 
 // WaitlistEntry is one row, lightly denormalised for list reads.
+// Session-side fields are populated only by MyWaitlistEntries (the
+// student's view needs them to render a usable card); session-level
+// listings leave them empty.
 type WaitlistEntry struct {
 	ID                domain.WaitlistID
 	SessionID         domain.SessionID
@@ -29,6 +32,13 @@ type WaitlistEntry struct {
 	Position          int       // 1-based, computed on read
 	PromotedAt        time.Time // zero when not promoted
 	PromotedBookingID domain.BookingID
+
+	// Denormalised session info — only set by MyWaitlistEntries.
+	SessionStartsAt time.Time
+	CourseCode      string
+	CourseName      string
+	CourseAccent    string
+	LocationName    string
 }
 
 // JoinWaitlist adds the student to a session's waitlist. Only allowed
@@ -141,8 +151,15 @@ func ListWaitlist(ctx context.Context, scope *tenant.Scope, sessionID domain.Ses
 // by /me to render "you're 3rd on the list for Saturday's CBT".
 func MyWaitlistEntries(ctx context.Context, scope *tenant.Scope, studentID domain.UserID) ([]WaitlistEntry, error) {
 	const q = `
-		SELECT w.id, w.session_id, w.joined_at
+		SELECT w.id, w.session_id, w.joined_at,
+		       s.starts_at,
+		       COALESCE(ct.code, ''), COALESCE(ct.name, ''),
+		       COALESCE(ct.accent_colour, ''),
+		       COALESCE(l.name, '')
 		FROM waitlist_entries w
+		JOIN sessions s ON s.id = w.session_id AND s.school_id = w.school_id
+		LEFT JOIN course_types ct ON ct.id = s.course_type_id AND ct.school_id = s.school_id
+		LEFT JOIN locations l ON l.id = s.location_id AND l.school_id = s.school_id
 		WHERE w.school_id = ? AND w.student_id = ? AND w.promoted_at IS NULL
 		ORDER BY w.joined_at ASC
 	`
@@ -154,12 +171,14 @@ func MyWaitlistEntries(ctx context.Context, scope *tenant.Scope, studentID domai
 	var out []WaitlistEntry
 	for rows.Next() {
 		var e WaitlistEntry
-		var joinedStr string
-		if err := rows.Scan(&e.ID, &e.SessionID, &joinedStr); err != nil {
+		var joinedStr, sessionStartsStr string
+		if err := rows.Scan(&e.ID, &e.SessionID, &joinedStr, &sessionStartsStr,
+			&e.CourseCode, &e.CourseName, &e.CourseAccent, &e.LocationName); err != nil {
 			return nil, err
 		}
 		e.StudentID = studentID
 		e.JoinedAt, _ = parseTime(joinedStr)
+		e.SessionStartsAt, _ = parseTime(sessionStartsStr)
 		// Position computed by counting earlier entries on the same session.
 		var pos int
 		_ = scope.Conn().QueryRowContext(ctx, `
@@ -171,6 +190,27 @@ func MyWaitlistEntries(ctx context.Context, scope *tenant.Scope, studentID domai
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// RemoveFromWaitlistByEntry deletes a specific waitlist entry by id.
+// Used by the admin "remove this student from the queue" action on
+// the master calendar. Auto-promotion does NOT fire — the entry being
+// removed isn't a cancellation, the seat that opened up belongs to
+// nobody.
+func RemoveFromWaitlistByEntry(ctx context.Context, scope *tenant.Scope, sessionID domain.SessionID, entryID domain.WaitlistID) error {
+	res, err := scope.Conn().ExecContext(ctx, `
+		DELETE FROM waitlist_entries
+		WHERE id = ? AND session_id = ? AND school_id = ?
+		  AND promoted_at IS NULL
+	`, string(entryID), string(sessionID), string(scope.SchoolID()))
+	if err != nil {
+		return fmt.Errorf("remove waitlist entry: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("waitlist: entry not found")
+	}
+	return nil
 }
 
 // promoteFromWaitlist consumes the head of the waitlist for a session
