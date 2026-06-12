@@ -4,16 +4,34 @@
 // logout) without rebuilding the client. Errors from the Go server come
 // back as {"error": code, "message": text} — the response interceptor
 // unwraps them into ApiException so callers branch on a stable code.
+//
+// `mock_api_client.dart` is `part of` this library so MockApiClient can
+// override the private `_send` seam without leaking private API to the
+// rest of the app.
+
+library;
+
+import 'dart:async';
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/services.dart';
 
 import 'models.dart';
 
+part 'mock_api_client.dart';
+
 class ApiClient {
   final Dio _dio;
-  String? Function() _tokenSupplier;
 
-  ApiClient({required String baseUrl, required String? Function() tokenSupplier})
+  /// Async because Firebase's `getIdToken()` is async. The Dio interceptor
+  /// awaits this before sending; widget code that needs a sync value (e.g.
+  /// `Image.network` headers for receipts) reads `currentToken()`, which
+  /// returns the most-recently-cached token from this supplier.
+  Future<String?> Function() _tokenSupplier;
+  String? _cachedToken;
+
+  ApiClient({required String baseUrl, required Future<String?> Function() tokenSupplier})
       : _dio = Dio(BaseOptions(
           baseUrl: baseUrl,
           connectTimeout: const Duration(seconds: 10),
@@ -24,8 +42,9 @@ class ApiClient {
         )),
         _tokenSupplier = tokenSupplier {
     _dio.interceptors.add(InterceptorsWrapper(
-      onRequest: (options, handler) {
-        final t = _tokenSupplier();
+      onRequest: (options, handler) async {
+        final t = await _tokenSupplier();
+        _cachedToken = t;
         if (t != null && t.isNotEmpty) {
           options.headers['Authorization'] = 'Bearer $t';
         }
@@ -34,8 +53,9 @@ class ApiClient {
     ));
   }
 
-  /// Replace the token supplier — used after login completes.
-  void setTokenSupplier(String? Function() s) {
+  /// Replace the token supplier — kept exported so test harnesses can
+  /// stub it without rebuilding the client.
+  void setTokenSupplier(Future<String?> Function() s) {
     _tokenSupplier = s;
   }
 
@@ -119,15 +139,48 @@ class ApiClient {
   }
 
   // ----- Auth -----
+  //
+  // Login + logout live in Firebase Auth post-cutover. Flutter calls
+  // `FirebaseAuth.signInWithEmailAndPassword` / `signOut()` directly,
+  // and the AuthController watches `authStateChanges()`. The only
+  // server endpoint we still hit during sign-in is /me, to load the
+  // school_id + role from our local users row.
 
-  Future<LoginResult> login(String email, String password) async {
-    final res = await _send('POST', '/auth/login',
-        data: {'email': email, 'password': password});
-    return LoginResult.fromJson(res.data as Map<String, dynamic>);
+  /// GET /schools — public catalog for the signup picker. No auth.
+  Future<List<SchoolLite>> listSchools() async {
+    final res = await _send('GET', '/schools');
+    return ((res.data as Map<String, dynamic>)['schools'] as List? ?? const [])
+        .map((e) => SchoolLite.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
-  Future<void> logout() async {
-    await _send('POST', '/auth/logout');
+  /// POST /auth/firebase-signup — runs after the Flutter side has called
+  /// `FirebaseAuth.createUserWithEmailAndPassword`. The JWT sent in the
+  /// Authorization header proves the UID; the body carries the rest of
+  /// the profile we own. Returns the resulting [Identity].
+  Future<Identity> firebaseSignup({
+    required String schoolId,
+    required String name,
+    required String email,
+    String? phone,
+    String? transmissionPreference,
+    String? licenceCategoryPursued,
+    String? dateOfBirth,
+  }) async {
+    final res = await _send('POST', '/auth/firebase-signup', data: {
+      'schoolId': schoolId,
+      'name': name,
+      'email': email,
+      if (phone != null && phone.isNotEmpty) 'phone': phone,
+      if (transmissionPreference != null && transmissionPreference.isNotEmpty)
+        'transmissionPreference': transmissionPreference,
+      if (licenceCategoryPursued != null && licenceCategoryPursued.isNotEmpty)
+        'licenceCategoryPursued': licenceCategoryPursued,
+      if (dateOfBirth != null && dateOfBirth.isNotEmpty) 'dateOfBirth': dateOfBirth,
+    });
+    return Identity.fromJson(
+      (res.data as Map<String, dynamic>)['identity'] as Map<String, dynamic>,
+    );
   }
 
   Future<Identity> me() async {
@@ -173,6 +226,18 @@ class ApiClient {
       if (studentId != null) 'studentId': studentId,
     });
     return BookingResult.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  /// POST /bookings/{id}/assign-bike — admin swaps the bike on a
+  /// booking. Backs the master-calendar edit sheet's per-row "Swap
+  /// bike" picker. Throws on 409 bike_not_suitable so the caller can
+  /// surface a friendly error.
+  Future<void> assignBookingBike({
+    required String bookingId,
+    required String bikeId,
+  }) async {
+    await _send('POST', '/bookings/$bookingId/assign-bike',
+        data: {'bikeId': bikeId});
   }
 
   Future<Booking> cancelBooking(String bookingId, {String? reason}) async {
@@ -260,6 +325,7 @@ class ApiClient {
     String? instructorId,
     String? locationId,
     String? courseTypeId,
+    bool includeCancelled = false,
   }) async {
     final res = await _send('GET', '/calendar', query: {
       'from': from.toUtc().toIso8601String(),
@@ -267,6 +333,7 @@ class ApiClient {
       if (instructorId != null && instructorId.isNotEmpty) 'instructorId': instructorId,
       if (locationId != null && locationId.isNotEmpty) 'locationId': locationId,
       if (courseTypeId != null && courseTypeId.isNotEmpty) 'courseTypeId': courseTypeId,
+      if (includeCancelled) 'includeCancelled': 'true',
     });
     return res.data as Map<String, dynamic>;
   }
@@ -407,6 +474,30 @@ class ApiClient {
     await _send('POST', '/signups/$userId/reject');
   }
 
+  Future<List<PendingApplicant>> listRejectedSignups() async {
+    final res = await _send('GET', '/signups/rejected');
+    return ((res.data as Map<String, dynamic>)['applicants'] as List? ?? const [])
+        .map((e) => PendingApplicant.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// GET /signups/approved — recently-approved (last 7 days) students,
+  /// newest first. Feeds the Approved tab so the manager can grab the
+  /// phone number to call straight after approving.
+  Future<List<PendingApplicant>> listApprovedSignups() async {
+    final res = await _send('GET', '/signups/approved');
+    return ((res.data as Map<String, dynamic>)['applicants'] as List? ?? const [])
+        .map((e) => PendingApplicant.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// POST /signups/{id}/restore — flip a rejected (disabled-no-bookings)
+  /// student back to pending_approval so they show up in the review queue
+  /// again. Used by the Rejected tab's "Restore" action.
+  Future<void> restoreSignup(String userId) async {
+    await _send('POST', '/signups/$userId/restore');
+  }
+
   // ----- Admin: students list -----
 
   Future<List<StudentRow>> listStudents({String? q}) async {
@@ -415,6 +506,344 @@ class ApiClient {
     return ((res.data as Map<String, dynamic>)['students'] as List? ?? const [])
         .map((e) => StudentRow.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  /// POST /sessions/{id}/waitlist — student joins the waitlist for a
+  /// full session. Returns 409 with `session_not_full` if there's still
+  /// capacity (the caller should book instead).
+  Future<void> joinSessionWaitlist(String sessionId) async {
+    await _send('POST', '/sessions/$sessionId/waitlist');
+  }
+
+  Future<void> leaveSessionWaitlist(String sessionId) async {
+    await _send('DELETE', '/sessions/$sessionId/waitlist');
+  }
+
+  /// GET /me/waitlist — entries owned by the calling student.
+  Future<List<Map<String, dynamic>>> listMyWaitlist() async {
+    final res = await _send('GET', '/me/waitlist');
+    return ((res.data as Map<String, dynamic>)['entries'] as List? ??
+            const [])
+        .cast<Map<String, dynamic>>();
+  }
+
+  /// GET /sessions/{id}/waitlist — staff enumeration of the queue for
+  /// one session. Returns rows + count for the manager's session detail.
+  Future<({List<Map<String, dynamic>> entries, int count})>
+      listSessionWaitlist(String sessionId) async {
+    final res = await _send('GET', '/sessions/$sessionId/waitlist');
+    final m = res.data as Map<String, dynamic>;
+    return (
+      entries: ((m['entries'] as List?) ?? const [])
+          .cast<Map<String, dynamic>>(),
+      count: (m['count'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  /// GET /followups — school-wide open follow-ups + counts in one call.
+  Future<({List<Map<String, dynamic>> followups, int open, int overdue})>
+      listOpenFollowups() async {
+    final res = await _send('GET', '/followups');
+    final m = res.data as Map<String, dynamic>;
+    final counts = (m['counts'] as Map<String, dynamic>?) ?? const {};
+    return (
+      followups: ((m['followups'] as List?) ?? const [])
+          .cast<Map<String, dynamic>>(),
+      open: (counts['open'] as num?)?.toInt() ?? 0,
+      overdue: (counts['overdue'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  /// GET /incidents/{id}/followups — staff list of follow-up actions
+  /// spawned for an incident.
+  Future<List<Map<String, dynamic>>> listIncidentFollowups(String incidentId) async {
+    final res = await _send('GET', '/incidents/$incidentId/followups');
+    return ((res.data as Map<String, dynamic>)['followups'] as List? ??
+            const [])
+        .cast<Map<String, dynamic>>();
+  }
+
+  Future<void> completeFollowup({
+    required String followupId,
+    String notes = '',
+  }) async {
+    await _send('POST', '/followups/$followupId/done',
+        data: notes.isEmpty ? null : {'notes': notes});
+  }
+
+  Future<void> reopenFollowup(String followupId) async {
+    await _send('POST', '/followups/$followupId/reopen');
+  }
+
+  /// POST /sessions — admin creates one ad-hoc session. instructorIds
+  /// is 0..N; an empty list flags the session as "needs instructor".
+  /// Server-side ratio violations come back as soft warnings — the
+  /// session is created regardless.
+  Future<({String id, List<String> warnings})> createSession({
+    required String courseTypeId,
+    required String locationId,
+    required DateTime startsAt,
+    required DateTime endsAt,
+    required int capacity,
+    List<String> instructorIds = const [],
+    String notes = '',
+  }) async {
+    final res = await _send('POST', '/sessions', data: {
+      'courseTypeId': courseTypeId,
+      'locationId': locationId,
+      'startsAt': startsAt.toUtc().toIso8601String(),
+      'endsAt': endsAt.toUtc().toIso8601String(),
+      'capacity': capacity,
+      'instructorIds': instructorIds,
+      if (notes.isNotEmpty) 'notes': notes,
+    });
+    final m = res.data as Map<String, dynamic>;
+    final warnings = ((m['warnings'] as List?) ?? const [])
+        .map((w) => ((w as Map)['message'] ?? '').toString())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    return (id: (m['id'] ?? '') as String, warnings: warnings);
+  }
+
+  /// PATCH /sessions/{id} — move a session to a new (startsAt, endsAt)
+  /// window. Backs the master-calendar drag-to-move interaction.
+  Future<void> updateSessionTime({
+    required String sessionId,
+    required DateTime startsAt,
+    required DateTime endsAt,
+  }) async {
+    await _send('PATCH', '/sessions/$sessionId', data: {
+      'startsAt': startsAt.toUtc().toIso8601String(),
+      'endsAt': endsAt.toUtc().toIso8601String(),
+    });
+  }
+
+  /// PATCH /sessions/{id} with whichever subset of fields the edit
+  /// sheet collected. Nil/empty fields are omitted so the server only
+  /// touches what the manager actually changed. Course type, location
+  /// and instructor assignment live on their own endpoints.
+  Future<void> updateSession({
+    required String sessionId,
+    DateTime? startsAt,
+    DateTime? endsAt,
+    int? capacity,
+  }) async {
+    if (startsAt == null && endsAt == null && capacity == null) return;
+    await _send('PATCH', '/sessions/$sessionId', data: {
+      if (startsAt != null) 'startsAt': startsAt.toUtc().toIso8601String(),
+      if (endsAt != null) 'endsAt': endsAt.toUtc().toIso8601String(),
+      if (capacity != null) 'capacity': capacity,
+    });
+  }
+
+  /// PUT /sessions/{id}/instructors — replace the instructor
+  /// assignment. Empty list clears the session.
+  Future<void> setSessionInstructors({
+    required String sessionId,
+    required List<String> instructorIds,
+  }) async {
+    await _send('PUT', '/sessions/$sessionId/instructors', data: {
+      'instructorIds': instructorIds,
+    });
+  }
+
+  /// POST /sessions/cancel-batch — manager bulk-cancels N sessions.
+  /// Each session is its own tx; results return per-session outcomes.
+  Future<({int sessionsCancelled, int bookingsCancelled})> cancelSessionsBatch({
+    required List<String> sessionIds,
+    String reason = '',
+  }) async {
+    final res = await _send('POST', '/sessions/cancel-batch', data: {
+      'sessionIds': sessionIds,
+      if (reason.isNotEmpty) 'reason': reason,
+    });
+    final m = res.data as Map<String, dynamic>;
+    return (
+      sessionsCancelled: (m['sessionsCancelled'] as num?)?.toInt() ?? 0,
+      bookingsCancelled: (m['bookingsCancelled'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  /// GET /closures — admin/owner list of school-wide closed dates.
+  Future<List<Map<String, dynamic>>> listClosures() async {
+    final res = await _send('GET', '/closures');
+    return ((res.data as Map<String, dynamic>)['closures'] as List? ??
+            const [])
+        .cast<Map<String, dynamic>>();
+  }
+
+  Future<Map<String, dynamic>> createClosure({
+    required String fromDate,
+    String toDate = '',
+    required String label,
+    String reason = '',
+  }) async {
+    final res = await _send('POST', '/closures', data: {
+      'fromDate': fromDate,
+      if (toDate.isNotEmpty) 'toDate': toDate,
+      'label': label,
+      if (reason.isNotEmpty) 'reason': reason,
+    });
+    return res.data as Map<String, dynamic>;
+  }
+
+  Future<void> deleteClosure(String id) async {
+    await _send('DELETE', '/closures/$id');
+  }
+
+  /// GET /session-templates — list admin templates.
+  Future<List<SessionTemplate>> listSessionTemplates() async {
+    final res = await _send('GET', '/session-templates');
+    return ((res.data as Map<String, dynamic>)['templates'] as List? ??
+            const [])
+        .map((e) => SessionTemplate.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<SessionTemplate> createSessionTemplate({
+    required String courseTypeId,
+    String instructorId = '',
+    required String locationId,
+    required int weekday,
+    required String startsAtTime,
+    required int durationMinutes,
+    required int capacity,
+    String startsOn = '',
+    String endsOn = '',
+    String notes = '',
+  }) async {
+    final res = await _send('POST', '/session-templates', data: {
+      'courseTypeId': courseTypeId,
+      if (instructorId.isNotEmpty) 'instructorId': instructorId,
+      'locationId': locationId,
+      'weekday': weekday,
+      'startsAtTime': startsAtTime,
+      'durationMinutes': durationMinutes,
+      'capacity': capacity,
+      if (startsOn.isNotEmpty) 'startsOn': startsOn,
+      if (endsOn.isNotEmpty) 'endsOn': endsOn,
+      if (notes.isNotEmpty) 'notes': notes,
+    });
+    return SessionTemplate.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<void> deleteSessionTemplate(String id) async {
+    await _send('DELETE', '/session-templates/$id');
+  }
+
+  /// POST /session-templates/materialise — generate sessions for the
+  /// next N weeks across all templates. Returns ({created, id}); id is
+  /// empty when nothing new was generated (idempotent re-run).
+  Future<({int created, String id})> materialiseTemplates({int weeks = 4}) async {
+    final res = await _send('POST', '/session-templates/materialise',
+        query: {'weeks': weeks.toString()});
+    final m = res.data as Map<String, dynamic>;
+    return (
+      created: (m['created'] as num?)?.toInt() ?? 0,
+      id: (m['materialisationId'] ?? '') as String,
+    );
+  }
+
+  /// POST /session-templates/{id}/materialise — same as above but
+  /// scoped to one template.
+  Future<({int created, String id})> materialiseOneTemplate(
+      String templateId, {int weeks = 4}) async {
+    final res = await _send('POST', '/session-templates/$templateId/materialise',
+        query: {'weeks': weeks.toString()});
+    final m = res.data as Map<String, dynamic>;
+    return (
+      created: (m['created'] as num?)?.toInt() ?? 0,
+      id: (m['materialisationId'] ?? '') as String,
+    );
+  }
+
+  /// GET /session-templates/materialisations — recent passes.
+  Future<List<Map<String, dynamic>>> listMaterialisations() async {
+    final res = await _send('GET', '/session-templates/materialisations');
+    return ((res.data as Map<String, dynamic>)['materialisations'] as List? ??
+            const [])
+        .cast<Map<String, dynamic>>();
+  }
+
+  /// POST /session-templates/materialisations/{id}/undo — delete every
+  /// session this pass generated. Throws ApiException(code=has_bookings)
+  /// when one or more sessions already have student bookings.
+  Future<int> undoMaterialisation(String id) async {
+    final res = await _send('POST',
+        '/session-templates/materialisations/$id/undo');
+    return ((res.data as Map<String, dynamic>)['deleted'] as num?)?.toInt() ??
+        0;
+  }
+
+  /// GET /session-templates/{id}/preview — count of NEW sessions the
+  /// next materialise pass would create for this template.
+  Future<int> previewSessionTemplate(String id, {int weeks = 4}) async {
+    final res = await _send('GET', '/session-templates/$id/preview',
+        query: {'weeks': weeks.toString()});
+    return ((res.data as Map<String, dynamic>)['newSessions'] as num?)
+            ?.toInt() ??
+        0;
+  }
+
+  /// GET /revenue — admin-only consolidated finance overview.
+  Future<RevenueReport> getRevenue({int months = 12}) async {
+    final res = await _send('GET', '/revenue',
+        query: {'months': months.toString()});
+    return RevenueReport.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  /// GET /compliance — admin-only consolidated bike/instructor/school
+  /// expiry view, with severity buckets precomputed server-side.
+  Future<ComplianceReport> getCompliance() async {
+    final res = await _send('GET', '/compliance');
+    return ComplianceReport.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  /// PUT /school/insurance — set or clear.
+  Future<void> setInsurance({required String expiresOn}) async {
+    await _send('PUT', '/school/insurance', data: {'expiresOn': expiresOn});
+  }
+
+  /// GET /audit — admin-only paginated mutation history.
+  /// Filters are passed as query params; the backend caps `limit` at 500.
+  Future<AuditPage> listAudit({
+    String? actor,
+    String? entity,
+    String? targetId,
+    DateTime? from,
+    DateTime? to,
+    int limit = 100,
+    int offset = 0,
+  }) async {
+    final params = <String, dynamic>{
+      'limit': limit.toString(),
+      'offset': offset.toString(),
+    };
+    if (actor != null && actor.isNotEmpty) params['actor'] = actor;
+    if (entity != null && entity.isNotEmpty) params['entity'] = entity;
+    if (targetId != null && targetId.isNotEmpty) params['targetId'] = targetId;
+    if (from != null) params['from'] = from.toUtc().toIso8601String();
+    if (to != null) params['to'] = to.toUtc().toIso8601String();
+    final res = await _send('GET', '/audit', query: params);
+    return AuditPage.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  /// POST /students — admin-only manual create. Backend mints the
+  /// Firebase identity, writes users + student_profiles, and returns a
+  /// row shaped like one entry of GET /students.
+  Future<StudentRow> createStudent({
+    required String name,
+    required String email,
+    required String password,
+    String phone = '',
+  }) async {
+    final res = await _send('POST', '/students', data: {
+      'name': name,
+      'email': email,
+      'phone': phone,
+      'password': password,
+    });
+    return StudentRow.fromJson(res.data as Map<String, dynamic>);
   }
 
   // ----- Admin: student detail aggregate -----
@@ -464,6 +893,31 @@ class ApiClient {
         .toList();
   }
 
+  /// POST /bikes — create a new bike. Backend defaults status to 'ready'
+  /// and sets current_location_id = home_location_id.
+  Future<FleetBike> createBike({
+    required String nickname,
+    required String make,
+    required String model,
+    required String registration,
+    required String category, // A1 | A2 | A
+    required String transmission, // manual | auto
+    required int engineCc,
+    required String homeLocationId,
+  }) async {
+    final res = await _send('POST', '/bikes', data: {
+      'nickname': nickname,
+      'make': make,
+      'model': model,
+      'registration': registration,
+      'category': category,
+      'transmission': transmission,
+      'engineCc': engineCc,
+      'homeLocationId': homeLocationId,
+    });
+    return FleetBike.fromJson(res.data as Map<String, dynamic>);
+  }
+
   /// POST /bikes/{id}/offline — opens a bike-down disruption. Returns the
   /// affected-bookings payload so the caller can show what's impacted.
   Future<Map<String, dynamic>> takeBikeOffline({
@@ -482,6 +936,32 @@ class ApiClient {
   /// unavailability windows.
   Future<void> restoreBike(String bikeId) async {
     await _send('POST', '/bikes/$bikeId/restore');
+  }
+
+  /// POST /incidents — staff log an incident on a bike/student/booking.
+  /// Setting `takeBikeOffline: true` rolls the bike-offline + disruption
+  /// flow into the same request so the instructor can report a crash and
+  /// pull the bike from service in one tap.
+  Future<Map<String, dynamic>> logIncident({
+    String? bikeId,
+    String? studentId,
+    String? bookingId,
+    DateTime? occurredAt,
+    required String description,
+    bool takeBikeOffline = false,
+    String? offlineReason,
+  }) async {
+    final res = await _send('POST', '/incidents', data: {
+      if (bikeId != null && bikeId.isNotEmpty) 'bikeId': bikeId,
+      if (studentId != null && studentId.isNotEmpty) 'studentId': studentId,
+      if (bookingId != null && bookingId.isNotEmpty) 'bookingId': bookingId,
+      if (occurredAt != null) 'occurredAt': occurredAt.toUtc().toIso8601String(),
+      'description': description,
+      'takeBikeOffline': takeBikeOffline,
+      if (offlineReason != null && offlineReason.isNotEmpty)
+        'offlineReason': offlineReason,
+    });
+    return res.data as Map<String, dynamic>;
   }
 
   /// POST /bikes/{id}/move — update a bike's current_location_id. Used by
@@ -518,6 +998,14 @@ class ApiClient {
         });
   }
 
+  /// POST /disruptions/dismiss-past — bulk cancel-with-approval for
+  /// every pending affected-booking whose session has already ended.
+  /// Returns the count of rows processed.
+  Future<int> dismissPastDisruptions() async {
+    final res = await _send('POST', '/disruptions/dismiss-past');
+    return ((res.data as Map<String, dynamic>)['cancelled'] as num?)?.toInt() ?? 0;
+  }
+
   // ----- Admin: logistics -----
 
   /// GET /logistics?date=YYYY-MM-DD — derived view of bike moves needed.
@@ -546,7 +1034,7 @@ class ApiClient {
     required String phone,
     required String password,
     required String homeLocationId,
-    required List<String> qualifiedCourseIds,
+    required List<Accreditation> accreditations,
   }) async {
     final res = await _send('POST', '/instructors', data: {
       'name': name,
@@ -554,17 +1042,17 @@ class ApiClient {
       'phone': phone,
       'password': password,
       if (homeLocationId.isNotEmpty) 'homeLocationId': homeLocationId,
-      'qualifiedCourseIds': qualifiedCourseIds,
+      'accreditations': accreditations.map((a) => a.toJson()).toList(),
     });
     return InstructorRow.fromJson(res.data as Map<String, dynamic>);
   }
 
-  Future<void> setInstructorQualifications({
+  Future<void> setInstructorAccreditations({
     required String instructorId,
-    required List<String> courseTypeIds,
+    required List<Accreditation> accreditations,
   }) async {
-    await _send('PUT', '/instructors/$instructorId/qualifications', data: {
-      'courseTypeIds': courseTypeIds,
+    await _send('PUT', '/instructors/$instructorId/accreditations', data: {
+      'accreditations': accreditations.map((a) => a.toJson()).toList(),
     });
   }
 
@@ -640,16 +1128,38 @@ class ApiClient {
   /// PATCH /school — partial update of school settings. Fields not supplied
   /// are left unchanged.
   Future<void> updateSchoolSettings({
+    String? name,
+    String? testBodyLabel,
     String? onboardingMode,
     bool? instructorsCanRecordPayments,
     int? cancelCutoffHours,
     int? travelBufferMinutes,
+    int? crossSiteNoticeHours,
+    int? motWarnDays,
+    int? motUrgentDays,
+    int? taxWarnDays,
+    int? taxUrgentDays,
+    int? accreditationWarnDays,
+    int? accreditationUrgentDays,
+    int? insuranceWarnDays,
+    int? insuranceUrgentDays,
   }) async {
     await _send('PATCH', '/school', data: {
+      if (name != null) 'name': name,
+      if (testBodyLabel != null) 'testBodyLabel': testBodyLabel,
       if (onboardingMode != null) 'onboardingMode': onboardingMode,
       if (instructorsCanRecordPayments != null) 'instructorsCanRecordPayments': instructorsCanRecordPayments,
       if (cancelCutoffHours != null) 'cancelCutoffHours': cancelCutoffHours,
       if (travelBufferMinutes != null) 'travelBufferMinutes': travelBufferMinutes,
+      if (crossSiteNoticeHours != null) 'crossSiteNoticeHours': crossSiteNoticeHours,
+      if (motWarnDays != null) 'motWarnDays': motWarnDays,
+      if (motUrgentDays != null) 'motUrgentDays': motUrgentDays,
+      if (taxWarnDays != null) 'taxWarnDays': taxWarnDays,
+      if (taxUrgentDays != null) 'taxUrgentDays': taxUrgentDays,
+      if (accreditationWarnDays != null) 'accreditationWarnDays': accreditationWarnDays,
+      if (accreditationUrgentDays != null) 'accreditationUrgentDays': accreditationUrgentDays,
+      if (insuranceWarnDays != null) 'insuranceWarnDays': insuranceWarnDays,
+      if (insuranceUrgentDays != null) 'insuranceUrgentDays': insuranceUrgentDays,
     });
   }
 
@@ -662,6 +1172,99 @@ class ApiClient {
 
   Future<void> updateLocation({required String id, required String name, String address = ''}) async {
     await _send('PUT', '/locations/$id', data: {'name': name, 'address': address});
+  }
+
+  /// PUT /bikes/{id} — partial update. Pass empty strings for the MOT
+  /// / tax dates to clear them; null to leave them unchanged.
+  Future<void> updateBikeState({
+    required String id,
+    required String nickname,
+    required String make,
+    required String model,
+    required String registration,
+    required int engineCc,
+    String homeLocationId = '',
+    String? motExpiresOn,
+    String? taxExpiresOn,
+  }) async {
+    await _send('PUT', '/bikes/$id', data: {
+      'nickname': nickname,
+      'make': make,
+      'model': model,
+      'registration': registration,
+      'engineCc': engineCc,
+      if (homeLocationId.isNotEmpty) 'homeLocationId': homeLocationId,
+      if (motExpiresOn != null) 'motExpiresOn': motExpiresOn,
+      if (taxExpiresOn != null) 'taxExpiresOn': taxExpiresOn,
+    });
+  }
+
+  /// POST /bikes/{id}/mileage — record a new reading.
+  Future<void> recordBikeMileage({
+    required String id,
+    required int miles,
+    String source = 'manual',
+  }) async {
+    await _send('POST', '/bikes/$id/mileage',
+        data: {'miles': miles, 'source': source});
+  }
+
+  // ----- Bike maintenance log -----
+
+  /// GET /bikes/{id}/expenses — maintenance history + YTD total.
+  Future<BikeExpensesPayload> listBikeExpenses(String bikeId) async {
+    final res = await _send('GET', '/bikes/$bikeId/expenses');
+    return BikeExpensesPayload.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  /// POST /bikes/{id}/expenses (multipart) — record a maintenance line.
+  /// Returns the created expense.
+  Future<BikeExpense> recordBikeExpense({
+    required String bikeId,
+    required String category, // parts | labour | mot | tax | service | other
+    required int amountPence,
+    required String receiptPath,
+    String? vendor,
+    String? notes,
+    DateTime? occurredAt,
+  }) async {
+    final form = FormData.fromMap({
+      'category': category,
+      'amountPence': amountPence.toString(),
+      if (occurredAt != null)
+        'occurredAt':
+            '${occurredAt.year.toString().padLeft(4, '0')}-${occurredAt.month.toString().padLeft(2, '0')}-${occurredAt.day.toString().padLeft(2, '0')}',
+      if (vendor != null && vendor.isNotEmpty) 'vendor': vendor,
+      if (notes != null && notes.isNotEmpty) 'notes': notes,
+      'receipt': await MultipartFile.fromFile(receiptPath, filename: 'receipt.jpg'),
+    });
+    final res = await _dio.post<dynamic>('/bikes/$bikeId/expenses',
+        data: form,
+        options: Options(
+          contentType: 'multipart/form-data',
+          validateStatus: (s) => s != null && s < 500,
+        ));
+    if ((res.statusCode ?? 0) >= 400) {
+      final body = res.data;
+      if (body is Map<String, dynamic>) {
+        throw ApiException(res.statusCode!,
+            body['error']?.toString() ?? 'unknown',
+            body['message']?.toString() ?? 'Could not record the expense.');
+      }
+      throw ApiException(res.statusCode ?? 0, 'unknown', 'Could not record the expense.');
+    }
+    final wrap = res.data as Map<String, dynamic>;
+    return BikeExpense.fromJson(wrap['expense'] as Map<String, dynamic>);
+  }
+
+  /// URL for streaming the full receipt image — drop into
+  /// CachedNetworkImage with the auth header.
+  String bikeExpenseReceiptUrl(String id) =>
+      '${_dio.options.baseUrl}/bike-expenses/$id/receipt';
+
+  /// DELETE /bike-expenses/{id} — remove a maintenance record.
+  Future<void> deleteBikeExpense(String id) async {
+    await _send('DELETE', '/bike-expenses/$id');
   }
 
   Future<void> deleteLocation(String id) async {
@@ -812,7 +1415,8 @@ class ApiClient {
     required String categoryId,
     required int amountPence,
     required DateTime occurredAt,
-    required String receiptPath,
+    required Uint8List receiptBytes,
+    required String receiptFilename,
     String? where,
     String? notes,
   }) async {
@@ -822,7 +1426,9 @@ class ApiClient {
       'occurredAt': occurredAt.toUtc().toIso8601String(),
       if (where != null && where.isNotEmpty) 'where': where,
       if (notes != null && notes.isNotEmpty) 'notes': notes,
-      'receipt': await MultipartFile.fromFile(receiptPath, filename: 'receipt.jpg'),
+      // Bytes (not File) so this works on web — `MultipartFile.fromFile`
+      // would assert on `kIsWeb`.
+      'receipt': MultipartFile.fromBytes(receiptBytes, filename: receiptFilename),
     });
     // Don't use _send: it forces application/json and we need multipart.
     final res = await _dio.post<dynamic>('/me/expenses',
@@ -891,7 +1497,9 @@ class ApiClient {
     return Expense.fromJson((res.data as Map<String, dynamic>)['expense']);
   }
 
-  /// Bearer token getter so screens that load the receipt via `Image.network`
-  /// can pass it as an Authorization header.
-  String? currentToken() => _tokenSupplier();
+  /// Last-known bearer token, for callers that need it synchronously
+  /// (e.g. `Image.network` headers). Populated by the request
+  /// interceptor on every call, so any UI mounted after at least one
+  /// API request has fired sees a fresh value.
+  String? currentToken() => _cachedToken;
 }

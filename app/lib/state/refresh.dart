@@ -25,6 +25,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'notifications.dart';
 import 'providers.dart';
+import '../screens/admin_audit_screen.dart' show auditPageProvider;
+import '../screens/admin_closures_screen.dart' show closuresProvider;
 import '../screens/admin_master_calendar_screen.dart' show masterCalendarProvider;
 import '../screens/browse_sessions_screen.dart' show sessionsProvider;
 import '../screens/instructor_availability_screen.dart'
@@ -80,6 +82,7 @@ void refreshAdminTab(WidgetRef ref, String routePrefix) {
   ref.invalidate(logisticsForDateProvider);
   ref.invalidate(fleetProvider);
   ref.invalidate(expensesForReviewProvider);
+  ref.invalidate(openFollowupsProvider);
 
   if (routePrefix == '/admin' || routePrefix.startsWith('/admin/overview')) {
     ref.invalidate(fleetProvider);
@@ -115,6 +118,16 @@ void refreshAdminTab(WidgetRef ref, String routePrefix) {
   } else if (routePrefix.startsWith('/admin/reimbursements')) {
     ref.invalidate(expensesForReviewProvider);
     ref.invalidate(expenseCategoriesProvider);
+  } else if (routePrefix.startsWith('/admin/compliance')) {
+    ref.invalidate(complianceProvider);
+  } else if (routePrefix.startsWith('/admin/finance')) {
+    ref.invalidate(revenueProvider);
+  } else if (routePrefix.startsWith('/admin/audit')) {
+    ref.invalidate(auditPageProvider);
+  } else if (routePrefix.startsWith('/admin/closures')) {
+    ref.invalidate(closuresProvider);
+  } else if (routePrefix.startsWith('/admin/incidents')) {
+    ref.invalidate(openFollowupsProvider);
   }
   // Master calendar and Instructor pay use screen-local date/time-scoped
   // providers — they invalidate themselves on their internal pickers.

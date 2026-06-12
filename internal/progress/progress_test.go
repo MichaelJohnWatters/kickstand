@@ -92,7 +92,7 @@ func (f *fixture) seed() {
 	          duration_minutes, max_ratio, price_pence, non_teaching, created_at)
 	      VALUES (?, ?, 'TEST-PRAC', 'Practical test day', 'NI', 'A2', 90, 1, 6000, 1, ?)`,
 		f.courseTestDay, f.school, at)
-	exec(`INSERT INTO instructor_qualifications (school_id, instructor_id, course_type_id)
+	exec(`INSERT INTO instructor_accreditations (school_id, instructor_id, course_type_id)
 	      VALUES (?, ?, ?), (?, ?, ?)`,
 		f.school, f.instructor, f.courseCBT, f.school, f.instructor, f.courseTestDay)
 	exec(`INSERT INTO bikes (id, school_id, category, transmission, status, home_location_id, current_location_id, created_at)
@@ -105,11 +105,17 @@ func (f *fixture) seed() {
 	      VALUES (?, ?, ?, ?, ?, ?, ?, 2, ?)`,
 		f.session, f.school, f.courseCBT, f.instructor, f.location,
 		f.now.Add(24*time.Hour).Format(time.RFC3339), f.now.Add(28*time.Hour).Format(time.RFC3339), at)
+	exec(`INSERT INTO session_instructors (id, school_id, session_id, instructor_id, is_primary, assigned_at, assigned_by)
+	      VALUES (?, ?, ?, ?, 1, ?, ?)`,
+		"si_"+f.session, f.school, f.session, f.instructor, at, f.instructor)
 	exec(`INSERT INTO sessions (id, school_id, course_type_id, instructor_id, location_id,
 	          starts_at, ends_at, capacity, created_at)
 	      VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
 		f.sessionTestDay, f.school, f.courseTestDay, f.instructor, f.location,
 		f.now.Add(48*time.Hour).Format(time.RFC3339), f.now.Add(50*time.Hour).Format(time.RFC3339), at)
+	exec(`INSERT INTO session_instructors (id, school_id, session_id, instructor_id, is_primary, assigned_at, assigned_by)
+	      VALUES (?, ?, ?, ?, 1, ?, ?)`,
+		"si_"+f.sessionTestDay, f.school, f.sessionTestDay, f.instructor, at, f.instructor)
 	exec(`INSERT INTO bookings (id, school_id, session_id, student_id, bike_id, status, created_at)
 	      VALUES (?, ?, ?, ?, ?, 'booked', ?)`,
 		f.booking, f.school, f.session, f.student, f.bike, at)

@@ -1,0 +1,30 @@
+{
+  "expenses": [
+    {
+      "amountPence": 3800,
+      "categoryIcon": "fuel",
+      "categoryId": "petrol",
+      "categoryLabel": "Petrol",
+      "categoryTone": 25,
+      "id": "exp_dave_petrol_reimbursed",
+      "instructorId": "user_instr_dave",
+      "instructorName": "Dave Mitchell",
+      "notes": "",
+      "occurredAt": "2026-05-31T09:00:00Z",
+      "paidAt": "2026-06-03T09:00:00Z",
+      "paidBy": "user_owen",
+      "paidByName": "Owen O'Neill",
+      "paidMethod": "bank",
+      "receiptContentType": "image/jpeg",
+      "receiptSizeBytes": 19833,
+      "receiptThumb": "/9j/2wCEAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk8BDg4OExETJhUVJk81LTVPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT//AABEIADIAMgMBIgACEQEDEQH/xAGiAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgsQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+gEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoLEQACAQIEBAMEBwUEBAABAncAAQIDEQQFITEGEkFRB2FxEyIygQgUQpGhscEJIzNS8BVictEKFiQ04SXxFxgZGiYnKCkqNTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqCg4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2dri4+Tl5ufo6ery8/T19vf4+fr/2gAMAwEAAhEDEQA/AO4vDDayKqaRJcBhndDEpA9jkiq/2uP/AKF68/78p/jWneWyXVuUaKOUjlRJnbn3xWZ/ZEv/AED9O/77f/CklErmfcPtcf8A0L15/wB+U/xo+1x/9C9ef9+U/wAaP7Il/wCgfp3/AH2/+FH9kS/9A/Tv++3/AMKOWIcz7h9rj/6F68/78p/jUkM8UsyRnQrmMMcF3hTavueaj/siX/oH6d/32/8AhV3T7AWxaRra3ikPAMJY8e+aLR7BzPuT/ZLX/n2h/wC+BR9ktf8An2h/74FTUUrIOZlDU7EXWx1iMki8YNw8Qx/wHrWQ1rAjlHFsrKcEHVpAR+lbtzNdxuotrMTqRyTMEwfTkVRa7lLEtploT3JuUz/KqRJn/Z7b1tP/AAbyUfZ7b1tP/BvJV/7VJ/0C7P8A8CY/8KPtUn/QLs//AAJj/wAKYFD7Pbetp/4N5Kv2GmBZ0meHaq/MjJeySAntwcAij7VJ/wBAuz/8CY/8KtW9zeuyA6eiRHjetwrAD6Ac0gL1FFFIY2QOY2ETKr4+UsMgH6VmHS5ickaYSf8Apy/+yqbULK7upUa21Oa0VVwVRAwY+vNVP7I1P/oYbr/vylMRL/Zc3ppn/gF/9lR/Zc3ppn/gF/8AZVF/ZGp/9DDdf9+Uo/sjU/8AoYbr/vylAEv9lzemmf8AgF/9lV60ilhi8uVoSAflEUewAfTJrM/sjU/+hhuv+/KVLb6ZqEVxHJLrlxMitlo2iUBh6UAatFFFIYUUUUAFFFFABRRRQAUUUUAf/9k=",
+      "reviewedAt": "2026-05-31T13:00:00Z",
+      "reviewedBy": "user_owen",
+      "reviewedByName": "Owen O'Neill",
+      "status": "reimbursed",
+      "submittedAt": "2026-05-31T09:00:00Z",
+      "where": "Esso · Sydenham"
+    }
+  ],
+  "pendingCount": 4
+}

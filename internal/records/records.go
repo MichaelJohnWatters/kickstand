@@ -105,6 +105,31 @@ func LogIncident(ctx context.Context, scope *tenant.Scope, req LogIncidentReques
 		if err != nil {
 			return fmt.Errorf("insert incident: %w", err)
 		}
+		// Spawn the default follow-up checklist. Standard three items;
+		// the manager ticks them off as they're handled. We due-date
+		// mechanical + student-welfare at 24h out so they jump onto the
+		// "Needs attention" feed quickly; insurance is 7 days out.
+		standard := []struct {
+			kind, description string
+			dueIn             time.Duration
+		}{
+			{"mechanical_check", "Inspect the bike and sign off road-worthy.", 24 * time.Hour},
+			{"student_welfare", "Call the student to check they're OK.", 24 * time.Hour},
+			{"insurance_notify", "Notify the insurer if severity warrants it.", 7 * 24 * time.Hour},
+		}
+		for _, s := range standard {
+			due := inc.OccurredAt.Add(s.dueIn).Format("2006-01-02")
+			if _, err := tx.Conn().ExecContext(ctx, `
+				INSERT INTO incident_followups
+				    (id, school_id, incident_id, kind, description,
+				     due_on, created_at, created_by)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`, domain.NewID(), string(scope.SchoolID()), string(inc.ID),
+				s.kind, s.description, due,
+				inc.CreatedAt.Format(time.RFC3339), string(inc.CreatedBy)); err != nil {
+				return fmt.Errorf("insert followup: %w", err)
+			}
+		}
 		if req.TakeBikeOffline {
 			// Flip status to offline + add an open-ended unavailability.
 			if _, err := tx.Conn().ExecContext(ctx,
@@ -312,4 +337,180 @@ func boolInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// ----- Incident follow-ups -----
+
+type Followup struct {
+	ID          string
+	IncidentID  domain.IncidentID
+	Kind        string // mechanical_check | student_welfare | insurance_notify | other
+	Description string
+	OwnerUserID domain.UserID // empty when unassigned
+	DueOn       string        // YYYY-MM-DD, empty when no due date
+	DoneAt      time.Time     // zero when still open
+	DoneBy      domain.UserID
+	Notes       string
+	CreatedAt   time.Time
+}
+
+func (f Followup) IsDone() bool { return !f.DoneAt.IsZero() }
+
+// ListFollowups returns the follow-ups for one incident in creation
+// order.
+func ListFollowups(ctx context.Context, scope *tenant.Scope, incidentID domain.IncidentID) ([]Followup, error) {
+	rows, err := scope.Conn().QueryContext(ctx, `
+		SELECT id, incident_id, kind, description,
+		       COALESCE(owner_user_id, ''), COALESCE(due_on, ''),
+		       COALESCE(done_at, ''), COALESCE(done_by, ''),
+		       notes, created_at
+		FROM incident_followups
+		WHERE school_id = ? AND incident_id = ?
+		ORDER BY created_at ASC
+	`, string(scope.SchoolID()), string(incidentID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Followup
+	for rows.Next() {
+		var f Followup
+		var doneAtStr, createdAtStr string
+		if err := rows.Scan(&f.ID, &f.IncidentID, &f.Kind, &f.Description,
+			&f.OwnerUserID, &f.DueOn, &doneAtStr, &f.DoneBy,
+			&f.Notes, &createdAtStr); err != nil {
+			return nil, err
+		}
+		if doneAtStr != "" {
+			f.DoneAt, _ = time.Parse(time.RFC3339, doneAtStr)
+		}
+		f.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// MarkFollowupDone toggles a follow-up to done. Idempotent for an
+// already-done row (no-op). Records who clicked and when.
+func MarkFollowupDone(ctx context.Context, scope *tenant.Scope, id string, by domain.UserID, notes string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := scope.Conn().ExecContext(ctx, `
+		UPDATE incident_followups
+		   SET done_at = COALESCE(done_at, ?),
+		       done_by = COALESCE(done_by, ?),
+		       notes   = CASE WHEN ? = '' THEN notes ELSE ? END
+		 WHERE id = ? AND school_id = ?
+	`, now, string(by), notes, notes, id, string(scope.SchoolID()))
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ReopenFollowup clears the done state — for the (rare) case where a
+// follow-up was marked done by mistake.
+func ReopenFollowup(ctx context.Context, scope *tenant.Scope, id string) error {
+	res, err := scope.Conn().ExecContext(ctx, `
+		UPDATE incident_followups SET done_at = NULL, done_by = NULL
+		WHERE id = ? AND school_id = ?
+	`, id, string(scope.SchoolID()))
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// OpenFollowupCounts powers the manager Overview / Needs attention
+// surface — total open + overdue (past their due_on).
+type FollowupCounts struct {
+	Open    int
+	Overdue int
+}
+
+// FollowupListRow is the enriched read shape for the cross-school
+// follow-ups page — joins through to the incident + student + bike so
+// the UI doesn't have to fan out N+1 queries to render the list.
+type FollowupListRow struct {
+	Followup
+	IncidentOccurredAt time.Time
+	IncidentDescription string
+	StudentID          domain.UserID
+	StudentName        string
+	BikeID             domain.BikeID
+	BikeLabel          string // nickname OR make+model OR id
+}
+
+// ListOpenFollowups returns every un-done follow-up in the school,
+// ordered by due date ascending (oldest-overdue first). Drives the
+// /admin/incidents page.
+func ListOpenFollowups(ctx context.Context, scope *tenant.Scope) ([]FollowupListRow, error) {
+	const q = `
+		SELECT f.id, f.incident_id, f.kind, f.description,
+		       COALESCE(f.owner_user_id, ''), COALESCE(f.due_on, ''),
+		       COALESCE(f.done_at, ''), COALESCE(f.done_by, ''),
+		       f.notes, f.created_at,
+		       i.occurred_at, i.description,
+		       COALESCE(i.student_id, ''), COALESCE(u.name, ''),
+		       COALESCE(i.bike_id, ''),
+		       COALESCE(NULLIF(b.nickname, ''),
+		                TRIM(COALESCE(b.make, '') || ' ' || COALESCE(b.model, ''))) AS bike_label
+		FROM incident_followups f
+		JOIN incidents i ON i.id = f.incident_id AND i.school_id = f.school_id
+		LEFT JOIN users u ON u.id = i.student_id AND u.school_id = f.school_id
+		LEFT JOIN bikes b ON b.id = i.bike_id AND b.school_id = f.school_id
+		WHERE f.school_id = ? AND f.done_at IS NULL
+		ORDER BY (CASE WHEN f.due_on = '' THEN 1 ELSE 0 END), f.due_on ASC, f.created_at ASC
+	`
+	rows, err := scope.Conn().QueryContext(ctx, q, string(scope.SchoolID()))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FollowupListRow
+	for rows.Next() {
+		var r FollowupListRow
+		var doneAtStr, createdAtStr, occurredAtStr, bikeLabel string
+		if err := rows.Scan(
+			&r.ID, &r.IncidentID, &r.Kind, &r.Description,
+			&r.OwnerUserID, &r.DueOn,
+			&doneAtStr, &r.DoneBy,
+			&r.Notes, &createdAtStr,
+			&occurredAtStr, &r.IncidentDescription,
+			&r.StudentID, &r.StudentName,
+			&r.BikeID, &bikeLabel,
+		); err != nil {
+			return nil, err
+		}
+		if doneAtStr != "" {
+			r.DoneAt, _ = time.Parse(time.RFC3339, doneAtStr)
+		}
+		r.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+		r.IncidentOccurredAt, _ = time.Parse(time.RFC3339, occurredAtStr)
+		r.BikeLabel = bikeLabel
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func CountOpenFollowups(ctx context.Context, scope *tenant.Scope) (FollowupCounts, error) {
+	today := time.Now().UTC().Format("2006-01-02")
+	var open, overdue int
+	if err := scope.Conn().QueryRowContext(ctx, `
+		SELECT
+		  COUNT(*),
+		  COALESCE(SUM(CASE WHEN due_on <> '' AND due_on < ? THEN 1 ELSE 0 END), 0)
+		FROM incident_followups
+		WHERE school_id = ? AND done_at IS NULL
+	`, today, string(scope.SchoolID())).Scan(&open, &overdue); err != nil {
+		return FollowupCounts{}, err
+	}
+	return FollowupCounts{Open: open, Overdue: overdue}, nil
 }

@@ -37,13 +37,21 @@ func (s *Server) handleListDisruptions(w http.ResponseWriter, r *http.Request) {
 		for _, ab := range d.Affected {
 			swaps := make([]map[string]any, 0, len(ab.SwapCandidates))
 			for _, c := range ab.SwapCandidates {
-				swaps = append(swaps, map[string]any{
-					"bikeId":            c.BikeID,
-					"bikeNickname":      c.BikeNickname,
-					"bikeRegistration":  c.BikeRegistration,
-					"currentLocationId": c.CurrentLocationID,
-					"isCrossSite":       c.IsCrossSite,
-				})
+				row := map[string]any{
+					"bikeId":              c.BikeID,
+					"bikeNickname":        c.BikeNickname,
+					"bikeRegistration":    c.BikeRegistration,
+					"currentLocationId":   c.CurrentLocationID,
+					"currentLocationName": c.CurrentLocationName,
+					"isCrossSite":         c.IsCrossSite,
+					"travelMinutes":       c.TravelMinutes,
+					"tightFromPrior":      c.TightFromPrior,
+				}
+				if c.TightFromPrior {
+					row["priorSessionEndsAt"] = c.PriorSessionEndsAt.Format(time.RFC3339)
+					row["priorSessionLocation"] = c.PriorSessionLocation
+				}
+				swaps = append(swaps, row)
 			}
 			row := map[string]any{
 				"bookingId":       ab.BookingID,

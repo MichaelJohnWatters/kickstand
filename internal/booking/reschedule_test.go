@@ -24,6 +24,12 @@ func addSecondSession(t *testing.T, f *testFixture, id, courseTypeID, instructor
 	if err != nil {
 		t.Fatalf("add session: %v", err)
 	}
+	if _, err := f.db.Exec(`INSERT INTO session_instructors
+	    (id, school_id, session_id, instructor_id, is_primary, assigned_at, assigned_by)
+	    VALUES (?, ?, ?, ?, 1, ?, ?)`,
+		"si_"+id, f.schoolID, id, instructor, f.now.Format(time.RFC3339), instructor); err != nil {
+		t.Fatalf("add session instructor: %v", err)
+	}
 	return domain.SessionID(id)
 }
 

@@ -8,6 +8,8 @@ import 'package:google_fonts/google_fonts.dart';
 import '../state/providers.dart';
 import '../state/refresh.dart';
 import '../theme/tokens.dart';
+import '../widgets/demo_mode_banner.dart';
+import '../widgets/email_verification_banner.dart';
 
 class InstructorShell extends ConsumerStatefulWidget {
   final Widget child;
@@ -55,7 +57,15 @@ class _InstructorShellState extends ConsumerState<InstructorShell> {
     }
     return Scaffold(
       backgroundColor: KsColors.bg,
-      body: SelectionArea(child: widget.child),
+      body: SelectionArea(
+        child: Column(
+          children: [
+            const DemoModeBanner(),
+            const EmailVerificationBanner(),
+            Expanded(child: widget.child),
+          ],
+        ),
+      ),
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(
           color: KsColors.surface,

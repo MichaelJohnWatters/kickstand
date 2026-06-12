@@ -222,7 +222,7 @@ func courseTypeInUse(ctx context.Context, scope *tenant.Scope, id domain.CourseT
 		SELECT
 		    (SELECT COUNT(*) FROM sessions WHERE school_id = ? AND course_type_id = ?) +
 		    (SELECT COUNT(*) FROM competencies WHERE school_id = ? AND course_type_id = ?) +
-		    (SELECT COUNT(*) FROM instructor_qualifications WHERE school_id = ? AND course_type_id = ?)
+		    (SELECT COUNT(*) FROM instructor_accreditations WHERE school_id = ? AND course_type_id = ?)
 	`, string(scope.SchoolID()), string(id),
 		string(scope.SchoolID()), string(id),
 		string(scope.SchoolID()), string(id)).Scan(&n)

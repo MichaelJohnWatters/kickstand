@@ -4,30 +4,265 @@
 //   - Uses stdlib net/http with Go 1.22+ pattern routing (no chi/gorilla).
 //     The router complexity here is genuinely small; adding a router lib
 //     would cost a dependency and a learning surface for not much gain.
-//   - Bearer-token auth: clients send `Authorization: Bearer <token>` from
-//     a /auth/login response. Auth middleware resolves it to an Identity
-//     and stores it in the request context.
+//   - Bearer-token auth: clients send `Authorization: Bearer <token>`
+//     containing a Firebase ID token. The auth middleware verifies it
+//     via the Admin SDK and stores the resolved Identity in request
+//     context.
 //   - Error responses are JSON: {"error": "<code>", "message": "<human>"}.
 //     Codes are stable; messages may be tweaked. The known engine errors
 //     have explicit code mappings (see errors.go).
+//   - The full route list is declared by `routeTable()` and mounted in a
+//     single loop, so adding a new endpoint means adding one row. The
+//     `Public` flag on each row is what TestAuth_AllProtectedRoutes
+//     uses to verify every authenticated route rejects missing tokens
+//     and forged tokens — see auth_coverage_test.go.
 package httpapi
 
 import (
 	"database/sql"
 	"net/http"
 
+	"github.com/michaeljohnwatters/kickstand/internal/auth"
 	"github.com/michaeljohnwatters/kickstand/internal/filestore"
 )
 
 // Server holds the dependencies handlers need. Keep this struct flat — it's
 // the dependency-injection surface for handlers.
 type Server struct {
-	DB    *sql.DB
-	Files filestore.Store // receipt blobs (and any future file types)
+	DB       *sql.DB
+	Files    filestore.Store      // receipt blobs (and any future file types)
+	Firebase *auth.FirebaseClient // nil when running without Firebase Auth (tests, legacy `make run` target).
 }
 
-func NewServer(d *sql.DB, files filestore.Store) *Server {
-	return &Server{DB: d, Files: files}
+func NewServer(d *sql.DB, files filestore.Store, fb *auth.FirebaseClient) *Server {
+	return &Server{DB: d, Files: files, Firebase: fb}
+}
+
+// RoutePattern describes a single route mount-point. Exported so tests
+// can enumerate the full route table and assert authentication coverage.
+type RoutePattern struct {
+	Method  string
+	Pattern string
+	Public  bool // true if no auth middleware is applied
+}
+
+// routeSpec is the internal form — same as RoutePattern but with the
+// actual handler attached.
+type routeSpec struct {
+	method  string
+	pattern string
+	public  bool
+	handler http.HandlerFunc
+}
+
+// RouteTable returns the (method, pattern, public) triples for every
+// route the server mounts. Used by auth-coverage tests to enumerate
+// every authenticated route and verify it rejects missing/forged
+// tokens.
+func (s *Server) RouteTable() []RoutePattern {
+	specs := s.routeTable()
+	out := make([]RoutePattern, len(specs))
+	for i, sp := range specs {
+		out[i] = RoutePattern{Method: sp.method, Pattern: sp.pattern, Public: sp.public}
+	}
+	return out
+}
+
+func (s *Server) routeTable() []routeSpec {
+	return []routeSpec{
+		// Public — identity is owned by Firebase, so the only auth-adjacent
+		// endpoint we expose is "create the local profile for an already-
+		// authenticated Firebase user".
+		{"POST", "/auth/firebase-signup", true, s.handleFirebaseSignup},
+		{"GET", "/schools", true, s.handleListSchools},
+		{"GET", "/health", true, healthCheck},
+
+		// Identity + sessions
+		{"GET", "/me", false, s.handleMe},
+		{"GET", "/sessions", false, s.handleListSessions},
+		{"GET", "/sessions/{id}/suitable-bikes", false, s.handleSuitableBikes},
+
+		// Sessions — ad-hoc create + instructor assignment + drag-to-move
+		{"POST", "/sessions", false, s.handleCreateSession},
+		{"PATCH", "/sessions/{id}", false, s.handleUpdateSession},
+		{"PUT", "/sessions/{id}/instructors", false, s.handleSetSessionInstructors},
+
+		// Bookings
+		{"POST", "/bookings", false, s.handleCreateBooking},
+		{"DELETE", "/bookings/{id}", false, s.handleCancelBooking},
+		{"POST", "/bookings/{id}/reschedule", false, s.handleRescheduleBooking},
+		{"POST", "/bookings/{id}/assign-bike", false, s.handleAssignBookingBike},
+		{"GET", "/me/bookings", false, s.handleMyBookings},
+		{"GET", "/me/student-profile", false, s.handleMyStudentProfile},
+		{"GET", "/students/{id}/bookings", false, s.handleStudentBookings},
+		{"GET", "/students", false, s.handleListStudents},
+		{"POST", "/students", false, s.handleCreateStudent},
+
+		// Audit log — admin/owner read-only view of the mutation history.
+		{"GET", "/audit", false, s.handleListAudit},
+
+		// Compliance dashboard — bike docs, instructor accreditation, school insurance.
+		// Per-course accreditation expiries are managed on the Instructors
+		// page via PUT /instructors/{id}/accreditations.
+		{"GET", "/compliance", false, s.handleGetCompliance},
+		{"PUT", "/school/insurance", false, s.handleSetInsurance},
+
+		// Revenue overview — monthly buckets, ageing, per-course breakdown.
+		{"GET", "/revenue", false, s.handleGetRevenue},
+
+		// School closures — block session-creating flows on these dates.
+		{"GET", "/closures", false, s.handleListClosures},
+		{"POST", "/closures", false, s.handleCreateClosure},
+		{"DELETE", "/closures/{id}", false, s.handleDeleteClosure},
+
+		// Bulk session cancellation — manager's rainy-day workflow.
+		{"POST", "/sessions/cancel-batch", false, s.handleCancelSessionsBatch},
+
+		// Waitlist — students opt into full sessions; cancels auto-promote.
+		{"POST", "/sessions/{id}/waitlist", false, s.handleJoinWaitlist},
+		{"DELETE", "/sessions/{id}/waitlist", false, s.handleLeaveWaitlist},
+		{"GET", "/sessions/{id}/waitlist", false, s.handleListWaitlist},
+		{"GET", "/me/waitlist", false, s.handleMyWaitlist},
+
+		// Session templates — recurring schedule recipes that materialise sessions.
+		{"GET", "/session-templates", false, s.handleListTemplates},
+		{"POST", "/session-templates", false, s.handleCreateTemplate},
+		{"DELETE", "/session-templates/{id}", false, s.handleDeleteTemplate},
+		{"POST", "/session-templates/materialise", false, s.handleMaterialiseTemplates},
+		{"POST", "/session-templates/{id}/materialise", false, s.handleMaterialiseOneTemplate},
+		{"GET", "/session-templates/{id}/preview", false, s.handlePreviewTemplate},
+		{"GET", "/session-templates/materialisations", false, s.handleListMaterialisations},
+		{"POST", "/session-templates/materialisations/{id}/undo", false, s.handleUndoMaterialisation},
+
+		// Ledger
+		{"GET", "/students/{id}/ledger", false, s.handleGetLedger},
+		{"POST", "/students/{id}/charges", false, s.handleCreateCharge},
+		{"DELETE", "/charges/{chargeId}", false, s.handleVoidCharge},
+		{"POST", "/students/{id}/payments", false, s.handleCreatePayment},
+		{"DELETE", "/payments/{paymentId}", false, s.handleVoidPayment},
+
+		// Signup admin approval queue
+		{"GET", "/signups/pending", false, s.handleListPendingSignups},
+		{"GET", "/signups/rejected", false, s.handleListRejectedSignups},
+		{"GET", "/signups/approved", false, s.handleListApprovedSignups},
+		{"POST", "/signups/{id}/approve", false, s.handleApproveSignup},
+		{"POST", "/signups/{id}/reject", false, s.handleRejectSignup},
+		{"POST", "/signups/{id}/restore", false, s.handleRestoreSignup},
+
+		// Admin CRUD — sites + travel matrix
+		{"GET", "/locations", false, s.handleListLocations},
+		{"POST", "/locations", false, s.handleCreateLocation},
+		{"PUT", "/locations/{id}", false, s.handleUpdateLocation},
+		{"DELETE", "/locations/{id}", false, s.handleDeleteLocation},
+		{"GET", "/travel-times", false, s.handleListTravelTimes},
+		{"PUT", "/travel-times", false, s.handleSetTravelTime},
+		{"DELETE", "/travel-times/{from}/{to}", false, s.handleDeleteTravelTime},
+
+		// Admin CRUD — fleet
+		{"GET", "/bikes", false, s.handleListBikes},
+		{"POST", "/bikes", false, s.handleCreateBike},
+		{"PUT", "/bikes/{id}", false, s.handleUpdateBike},
+		{"POST", "/bikes/{id}/restore", false, s.handleRestoreBike},
+		{"POST", "/bikes/{id}/move", false, s.handleMoveBike},
+		{"POST", "/bikes/{id}/mileage", false, s.handleRecordBikeMileage},
+		{"DELETE", "/bikes/{id}", false, s.handleDeleteBike},
+
+		// Admin CRUD — catalog
+		{"GET", "/course-types", false, s.handleListCourseTypes},
+		{"POST", "/course-types", false, s.handleCreateCourseType},
+		{"PUT", "/course-types/{id}", false, s.handleUpdateCourseType},
+		{"DELETE", "/course-types/{id}", false, s.handleDeleteCourseType},
+		{"GET", "/course-types/{id}/competencies", false, s.handleListCompetencies},
+		{"POST", "/course-types/{id}/competencies", false, s.handleCreateCompetency},
+		{"DELETE", "/competencies/{compId}", false, s.handleDeleteCompetency},
+
+		// Admin CRUD — staff
+		{"GET", "/instructors", false, s.handleListInstructors},
+		{"POST", "/instructors", false, s.handleInviteInstructor},
+		{"PUT", "/instructors/{id}/accreditations", false, s.handleSetAccreditations},
+
+		// Availability
+		{"GET", "/instructors/{id}/availability", false, s.handleListRecurringAvailability},
+		{"POST", "/instructors/{id}/availability", false, s.handleCreateRecurringAvailability},
+		{"DELETE", "/availability/{slotId}", false, s.handleDeleteRecurringAvailability},
+		{"GET", "/instructors/{id}/time-off", false, s.handleListTimeOff},
+		{"POST", "/instructors/{id}/time-off", false, s.handleAddTimeOff},
+		{"DELETE", "/time-off/{timeOffId}", false, s.handleDeleteTimeOff},
+
+		// Records — incidents, notes, external tests
+		{"POST", "/incidents", false, s.handleLogIncident},
+		{"GET", "/students/{id}/incidents", false, s.handleListStudentIncidents},
+		{"GET", "/followups", false, s.handleListOpenFollowups},
+		{"GET", "/incidents/{id}/followups", false, s.handleListIncidentFollowups},
+		{"POST", "/followups/{id}/done", false, s.handleCompleteFollowup},
+		{"POST", "/followups/{id}/reopen", false, s.handleReopenFollowup},
+		{"GET", "/students/{id}/notes", false, s.handleListStudentNotes},
+		{"POST", "/students/{id}/notes", false, s.handleAddStudentNote},
+		{"DELETE", "/notes/{noteId}", false, s.handleDeactivateNote},
+		{"GET", "/students/{id}/tests", false, s.handleListExternalTests},
+		{"POST", "/students/{id}/tests", false, s.handleRecordExternalTest},
+		{"PATCH", "/tests/{testId}", false, s.handleUpdateExternalTestOutcome},
+
+		// Student detail aggregate (manager-only big view)
+		{"GET", "/students/{id}", false, s.handleGetStudentDetail},
+
+		// Progress capture (instructor + admin)
+		{"POST", "/bookings/{id}/attendance", false, s.handleMarkAttendance},
+		{"PUT", "/bookings/{id}/competencies/{compId}", false, s.handleAssessCompetency},
+		{"PUT", "/bookings/{id}/notes", false, s.handleSetBookingNotes},
+		{"GET", "/sessions/{id}/detail", false, s.handleGetSessionDetail},
+		{"GET", "/students/{id}/progress", false, s.handleGetStudentProgress},
+
+		// Notifications (in-app bell)
+		{"GET", "/me/notifications", false, s.handleListMyNotifications},
+		{"POST", "/me/notifications/{id}/read", false, s.handleMarkNotificationRead},
+		{"POST", "/me/notifications/read-all", false, s.handleMarkAllNotificationsRead},
+		{"POST", "/me/device-tokens", false, s.handleRegisterDeviceToken},
+		{"DELETE", "/me/device-tokens/{token}", false, s.handleUnregisterDeviceToken},
+
+		// Master calendar (staff)
+		{"GET", "/calendar", false, s.handleCalendar},
+
+		// Logistics summary (admin)
+		{"GET", "/logistics", false, s.handleLogistics},
+
+		// School settings
+		{"GET", "/school", false, s.handleGetSchoolSettings},
+		{"PATCH", "/school", false, s.handleUpdateSchoolSettings},
+
+		// Disruption (bike down)
+		{"POST", "/bikes/{id}/offline", false, s.handleTakeBikeOffline},
+		{"GET", "/disruptions", false, s.handleListDisruptions},
+		{"POST", "/disruptions/{disruptionId}/bookings/{bookingId}/resolve", false, s.handleResolveDisruption},
+		{"POST", "/disruptions/dismiss-past", false, s.handleDismissPastDisruptions},
+
+		// Instructor pay
+		{"GET", "/instructor-pay/outstanding", false, s.handleListOutstanding},
+		{"GET", "/instructors/{id}/pay-model", false, s.handleGetPayModel},
+		{"PUT", "/instructors/{id}/pay-model", false, s.handleSetPayModel},
+		{"POST", "/instructors/{id}/earnings", false, s.handleCreateEarning},
+		{"DELETE", "/earnings/{earningId}", false, s.handleVoidEarning},
+		{"POST", "/instructors/{id}/payments", false, s.handleCreateInstructorPayment},
+
+		// Reimbursements
+		{"GET", "/expense-categories", false, s.handleListExpenseCategories},
+		{"PUT", "/expense-categories", false, s.handleUpsertExpenseCategories},
+		{"POST", "/me/expenses", false, s.handleSubmitExpense},
+		{"GET", "/me/expenses", false, s.handleListMyExpenses},
+		{"DELETE", "/me/expenses/{id}", false, s.handleWithdrawExpense},
+		{"GET", "/expenses", false, s.handleListExpensesForReview},
+		{"GET", "/expenses/{id}", false, s.handleGetExpense},
+		{"GET", "/expenses/{id}/receipt", false, s.handleGetExpenseReceipt},
+		{"POST", "/expenses/{id}/approve", false, s.handleApproveExpense},
+		{"POST", "/expenses/{id}/reject", false, s.handleRejectExpense},
+		{"POST", "/expenses/{id}/reimburse", false, s.handleReimburseExpense},
+
+		// Bike maintenance log (per-bike capex with receipts).
+		{"GET", "/bikes/{id}/expenses", false, s.handleListBikeExpenses},
+		{"POST", "/bikes/{id}/expenses", false, s.handleRecordBikeExpense},
+		{"GET", "/bike-expenses/{id}/receipt", false, s.handleGetBikeExpenseReceipt},
+		{"DELETE", "/bike-expenses/{id}", false, s.handleDeleteBikeExpense},
+	}
 }
 
 // Routes returns the mounted handler. Call from main:
@@ -35,146 +270,20 @@ func NewServer(d *sql.DB, files filestore.Store) *Server {
 //	http.ListenAndServe(":8765", server.Routes())
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-
-	// Public (no auth)
-	mux.HandleFunc("POST /auth/login", s.handleLogin)
-	mux.HandleFunc("POST /auth/signup", s.handleSignup)
-	mux.HandleFunc("GET /schools", s.handleListSchools)
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"ok":true}`))
-	})
-
-	// Authenticated
-	auth := s.authMiddleware
-	mux.Handle("POST /auth/logout", auth(http.HandlerFunc(s.handleLogout)))
-	mux.Handle("GET /me", auth(http.HandlerFunc(s.handleMe)))
-	mux.Handle("GET /sessions", auth(http.HandlerFunc(s.handleListSessions)))
-	mux.Handle("GET /sessions/{id}/suitable-bikes", auth(http.HandlerFunc(s.handleSuitableBikes)))
-	mux.Handle("POST /bookings", auth(http.HandlerFunc(s.handleCreateBooking)))
-	mux.Handle("DELETE /bookings/{id}", auth(http.HandlerFunc(s.handleCancelBooking)))
-	mux.Handle("POST /bookings/{id}/reschedule", auth(http.HandlerFunc(s.handleRescheduleBooking)))
-	mux.Handle("GET /me/bookings", auth(http.HandlerFunc(s.handleMyBookings)))
-	mux.Handle("GET /me/student-profile", auth(http.HandlerFunc(s.handleMyStudentProfile)))
-	mux.Handle("GET /students/{id}/bookings", auth(http.HandlerFunc(s.handleStudentBookings)))
-	mux.Handle("GET /students", auth(http.HandlerFunc(s.handleListStudents)))
-
-	// Ledger
-	mux.Handle("GET /students/{id}/ledger", auth(http.HandlerFunc(s.handleGetLedger)))
-	mux.Handle("POST /students/{id}/charges", auth(http.HandlerFunc(s.handleCreateCharge)))
-	mux.Handle("DELETE /charges/{chargeId}", auth(http.HandlerFunc(s.handleVoidCharge)))
-	mux.Handle("POST /students/{id}/payments", auth(http.HandlerFunc(s.handleCreatePayment)))
-	mux.Handle("DELETE /payments/{paymentId}", auth(http.HandlerFunc(s.handleVoidPayment)))
-
-	// Signup admin approval queue
-	mux.Handle("GET /signups/pending", auth(http.HandlerFunc(s.handleListPendingSignups)))
-	mux.Handle("POST /signups/{id}/approve", auth(http.HandlerFunc(s.handleApproveSignup)))
-	mux.Handle("POST /signups/{id}/reject", auth(http.HandlerFunc(s.handleRejectSignup)))
-
-	// Admin CRUD — sites + travel matrix
-	mux.Handle("GET /locations", auth(http.HandlerFunc(s.handleListLocations)))
-	mux.Handle("POST /locations", auth(http.HandlerFunc(s.handleCreateLocation)))
-	mux.Handle("PUT /locations/{id}", auth(http.HandlerFunc(s.handleUpdateLocation)))
-	mux.Handle("DELETE /locations/{id}", auth(http.HandlerFunc(s.handleDeleteLocation)))
-	mux.Handle("GET /travel-times", auth(http.HandlerFunc(s.handleListTravelTimes)))
-	mux.Handle("PUT /travel-times", auth(http.HandlerFunc(s.handleSetTravelTime)))
-	mux.Handle("DELETE /travel-times/{from}/{to}", auth(http.HandlerFunc(s.handleDeleteTravelTime)))
-
-	// Admin CRUD — fleet
-	mux.Handle("GET /bikes", auth(http.HandlerFunc(s.handleListBikes)))
-	mux.Handle("POST /bikes", auth(http.HandlerFunc(s.handleCreateBike)))
-	mux.Handle("PUT /bikes/{id}", auth(http.HandlerFunc(s.handleUpdateBike)))
-	mux.Handle("POST /bikes/{id}/restore", auth(http.HandlerFunc(s.handleRestoreBike)))
-	mux.Handle("POST /bikes/{id}/move", auth(http.HandlerFunc(s.handleMoveBike)))
-	mux.Handle("DELETE /bikes/{id}", auth(http.HandlerFunc(s.handleDeleteBike)))
-
-	// Admin CRUD — catalog
-	mux.Handle("GET /course-types", auth(http.HandlerFunc(s.handleListCourseTypes)))
-	mux.Handle("POST /course-types", auth(http.HandlerFunc(s.handleCreateCourseType)))
-	mux.Handle("PUT /course-types/{id}", auth(http.HandlerFunc(s.handleUpdateCourseType)))
-	mux.Handle("DELETE /course-types/{id}", auth(http.HandlerFunc(s.handleDeleteCourseType)))
-	mux.Handle("GET /course-types/{id}/competencies", auth(http.HandlerFunc(s.handleListCompetencies)))
-	mux.Handle("POST /course-types/{id}/competencies", auth(http.HandlerFunc(s.handleCreateCompetency)))
-	mux.Handle("DELETE /competencies/{compId}", auth(http.HandlerFunc(s.handleDeleteCompetency)))
-
-	// Admin CRUD — staff
-	mux.Handle("GET /instructors", auth(http.HandlerFunc(s.handleListInstructors)))
-	mux.Handle("POST /instructors", auth(http.HandlerFunc(s.handleInviteInstructor)))
-	mux.Handle("PUT /instructors/{id}/qualifications", auth(http.HandlerFunc(s.handleSetQualifications)))
-
-	// Availability
-	mux.Handle("GET /instructors/{id}/availability", auth(http.HandlerFunc(s.handleListRecurringAvailability)))
-	mux.Handle("POST /instructors/{id}/availability", auth(http.HandlerFunc(s.handleCreateRecurringAvailability)))
-	mux.Handle("DELETE /availability/{slotId}", auth(http.HandlerFunc(s.handleDeleteRecurringAvailability)))
-	mux.Handle("GET /instructors/{id}/time-off", auth(http.HandlerFunc(s.handleListTimeOff)))
-	mux.Handle("POST /instructors/{id}/time-off", auth(http.HandlerFunc(s.handleAddTimeOff)))
-	mux.Handle("DELETE /time-off/{timeOffId}", auth(http.HandlerFunc(s.handleDeleteTimeOff)))
-
-	// Records — incidents, notes, external tests (staff-only)
-	mux.Handle("POST /incidents", auth(http.HandlerFunc(s.handleLogIncident)))
-	mux.Handle("GET /students/{id}/incidents", auth(http.HandlerFunc(s.handleListStudentIncidents)))
-	mux.Handle("GET /students/{id}/notes", auth(http.HandlerFunc(s.handleListStudentNotes)))
-	mux.Handle("POST /students/{id}/notes", auth(http.HandlerFunc(s.handleAddStudentNote)))
-	mux.Handle("DELETE /notes/{noteId}", auth(http.HandlerFunc(s.handleDeactivateNote)))
-	mux.Handle("GET /students/{id}/tests", auth(http.HandlerFunc(s.handleListExternalTests)))
-	mux.Handle("POST /students/{id}/tests", auth(http.HandlerFunc(s.handleRecordExternalTest)))
-	mux.Handle("PATCH /tests/{testId}", auth(http.HandlerFunc(s.handleUpdateExternalTestOutcome)))
-
-	// Student detail aggregate (manager-only big view)
-	mux.Handle("GET /students/{id}", auth(http.HandlerFunc(s.handleGetStudentDetail)))
-
-	// Progress capture (instructor + admin)
-	mux.Handle("POST /bookings/{id}/attendance", auth(http.HandlerFunc(s.handleMarkAttendance)))
-	mux.Handle("PUT /bookings/{id}/competencies/{compId}", auth(http.HandlerFunc(s.handleAssessCompetency)))
-	mux.Handle("PUT /bookings/{id}/notes", auth(http.HandlerFunc(s.handleSetBookingNotes)))
-	mux.Handle("GET /sessions/{id}/detail", auth(http.HandlerFunc(s.handleGetSessionDetail)))
-	mux.Handle("GET /students/{id}/progress", auth(http.HandlerFunc(s.handleGetStudentProgress)))
-
-	// Notifications (in-app bell)
-	mux.Handle("GET /me/notifications", auth(http.HandlerFunc(s.handleListMyNotifications)))
-	mux.Handle("POST /me/notifications/{id}/read", auth(http.HandlerFunc(s.handleMarkNotificationRead)))
-	mux.Handle("POST /me/notifications/read-all", auth(http.HandlerFunc(s.handleMarkAllNotificationsRead)))
-	mux.Handle("POST /me/device-tokens", auth(http.HandlerFunc(s.handleRegisterDeviceToken)))
-	mux.Handle("DELETE /me/device-tokens/{token}", auth(http.HandlerFunc(s.handleUnregisterDeviceToken)))
-
-	// Master calendar (staff)
-	mux.Handle("GET /calendar", auth(http.HandlerFunc(s.handleCalendar)))
-
-	// Logistics summary (admin)
-	mux.Handle("GET /logistics", auth(http.HandlerFunc(s.handleLogistics)))
-
-	// Admin CRUD — school settings
-	mux.Handle("GET /school", auth(http.HandlerFunc(s.handleGetSchoolSettings)))
-	mux.Handle("PATCH /school", auth(http.HandlerFunc(s.handleUpdateSchoolSettings)))
-
-	// Disruption (bike down)
-	mux.Handle("POST /bikes/{id}/offline", auth(http.HandlerFunc(s.handleTakeBikeOffline)))
-	mux.Handle("GET /disruptions", auth(http.HandlerFunc(s.handleListDisruptions)))
-	mux.Handle("POST /disruptions/{disruptionId}/bookings/{bookingId}/resolve",
-		auth(http.HandlerFunc(s.handleResolveDisruption)))
-
-	// Instructor pay (owed-tracking, admin-only)
-	mux.Handle("GET /instructor-pay/outstanding", auth(http.HandlerFunc(s.handleListOutstanding)))
-	mux.Handle("GET /instructors/{id}/pay-model", auth(http.HandlerFunc(s.handleGetPayModel)))
-	mux.Handle("PUT /instructors/{id}/pay-model", auth(http.HandlerFunc(s.handleSetPayModel)))
-	mux.Handle("POST /instructors/{id}/earnings", auth(http.HandlerFunc(s.handleCreateEarning)))
-	mux.Handle("DELETE /earnings/{earningId}", auth(http.HandlerFunc(s.handleVoidEarning)))
-	mux.Handle("POST /instructors/{id}/payments", auth(http.HandlerFunc(s.handleCreateInstructorPayment)))
-
-	// Reimbursements — instructor self-serve + admin review
-	mux.Handle("GET /expense-categories", auth(http.HandlerFunc(s.handleListExpenseCategories)))
-	mux.Handle("PUT /expense-categories", auth(http.HandlerFunc(s.handleUpsertExpenseCategories)))
-	mux.Handle("POST /me/expenses", auth(http.HandlerFunc(s.handleSubmitExpense)))
-	mux.Handle("GET /me/expenses", auth(http.HandlerFunc(s.handleListMyExpenses)))
-	mux.Handle("DELETE /me/expenses/{id}", auth(http.HandlerFunc(s.handleWithdrawExpense)))
-	mux.Handle("GET /expenses", auth(http.HandlerFunc(s.handleListExpensesForReview)))
-	mux.Handle("GET /expenses/{id}", auth(http.HandlerFunc(s.handleGetExpense)))
-	mux.Handle("GET /expenses/{id}/receipt", auth(http.HandlerFunc(s.handleGetExpenseReceipt)))
-	mux.Handle("POST /expenses/{id}/approve", auth(http.HandlerFunc(s.handleApproveExpense)))
-	mux.Handle("POST /expenses/{id}/reject", auth(http.HandlerFunc(s.handleRejectExpense)))
-	mux.Handle("POST /expenses/{id}/reimburse", auth(http.HandlerFunc(s.handleReimburseExpense)))
-
+	authMW := s.authMiddleware
+	for _, r := range s.routeTable() {
+		h := http.Handler(r.handler)
+		if !r.public {
+			h = authMW(h)
+		}
+		mux.Handle(r.method+" "+r.pattern, h)
+	}
 	// Cross-cutting: CORS → log → recover, all wrapping the mux. Order matters:
 	// CORS must be outermost so preflights short-circuit before logging.
-	return withCORS(withRecover(withLog(mux)))
+	return withCORS(withRecover(s.withLog(mux)))
+}
+
+func healthCheck(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"ok":true}`))
 }

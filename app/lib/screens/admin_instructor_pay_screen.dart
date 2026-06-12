@@ -13,6 +13,7 @@ import 'package:intl/intl.dart';
 import '../api/models.dart';
 import '../state/providers.dart';
 import '../theme/tokens.dart';
+import '../widgets/empty_state.dart';
 
 class AdminInstructorPayScreen extends ConsumerWidget {
   const AdminInstructorPayScreen({super.key});
@@ -40,7 +41,7 @@ class AdminInstructorPayScreen extends ConsumerWidget {
               padding: EdgeInsets.symmetric(vertical: 32),
               child: Center(child: CircularProgressIndicator(color: KsColors.primary)),
             ),
-            error: (e, _) => Text('Couldn’t load.\n$e'),
+            error: (e, _) => KsEmptyState.error(message: e.toString()),
             data: (rows) {
               final totalOutstanding = rows.fold<int>(0, (s, r) => s + r.outstandingPence);
               return Column(children: [

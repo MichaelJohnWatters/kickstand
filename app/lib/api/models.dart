@@ -4,6 +4,22 @@
 // All from-JSON constructors are forgiving of missing/null fields — server
 // responses evolve, and one missing field shouldn't crash a screen.
 
+import 'dart:convert';
+import 'dart:typed_data';
+
+/// _decodeThumb turns the base64 receipt thumbnail the server inlines
+/// in list payloads into bytes ready for `Image.memory`. Returns an
+/// empty Uint8List when the field is missing or invalid — the list
+/// cell falls back to its stripe placeholder.
+Uint8List _decodeThumb(dynamic raw) {
+  if (raw is! String || raw.isEmpty) return Uint8List(0);
+  try {
+    return base64Decode(raw);
+  } catch (_) {
+    return Uint8List(0);
+  }
+}
+
 class Identity {
   final String userId;
   final String schoolId;
@@ -473,6 +489,21 @@ class NotificationList {
 
 /// School-level settings the app needs to render conditional UI (e.g. the
 /// in-field payment row only appears when instructorsCanRecordPayments is on).
+/// Minimal school metadata for the signup picker. Returned by the public
+/// GET /schools endpoint — no auth required, since prospective students
+/// need to see the list before having an account.
+class SchoolLite {
+  final String id;
+  final String name;
+  final String region;
+  const SchoolLite({required this.id, required this.name, required this.region});
+  factory SchoolLite.fromJson(Map<String, dynamic> j) => SchoolLite(
+        id: j['id'] ?? '',
+        name: j['name'] ?? '',
+        region: j['region'] ?? '',
+      );
+}
+
 class SchoolSettings {
   final String name;
   final String region;
@@ -482,6 +513,19 @@ class SchoolSettings {
   final int cancelCutoffHours;
   final int travelBufferMinutes;
   final int crossSiteNoticeHours;
+  // Fleet warning thresholds — drive MOT/tax pill colours on the bike
+  // cards. Defaults match the Go side's migration 0008 defaults so a
+  // brand-new tenant gets sensible values without visiting Settings.
+  final int motWarnDays;
+  final int motUrgentDays;
+  final int taxWarnDays;
+  final int taxUrgentDays;
+  // Compliance dashboard windows (annual cycles). Defaults match
+  // migration 0015 so a brand-new tenant gets sensible values.
+  final int accreditationWarnDays;
+  final int accreditationUrgentDays;
+  final int insuranceWarnDays;
+  final int insuranceUrgentDays;
 
   SchoolSettings({
     required this.name,
@@ -492,6 +536,14 @@ class SchoolSettings {
     required this.cancelCutoffHours,
     required this.travelBufferMinutes,
     required this.crossSiteNoticeHours,
+    required this.motWarnDays,
+    required this.motUrgentDays,
+    required this.taxWarnDays,
+    required this.taxUrgentDays,
+    required this.accreditationWarnDays,
+    required this.accreditationUrgentDays,
+    required this.insuranceWarnDays,
+    required this.insuranceUrgentDays,
   });
 
   factory SchoolSettings.fromJson(Map<String, dynamic> j) => SchoolSettings(
@@ -503,20 +555,110 @@ class SchoolSettings {
         cancelCutoffHours: j['cancelCutoffHours'] ?? 48,
         travelBufferMinutes: j['travelBufferMinutes'] ?? 15,
         crossSiteNoticeHours: j['crossSiteNoticeHours'] ?? 12,
+        motWarnDays: (j['motWarnDays'] as num?)?.toInt() ?? 90,
+        motUrgentDays: (j['motUrgentDays'] as num?)?.toInt() ?? 14,
+        taxWarnDays: (j['taxWarnDays'] as num?)?.toInt() ?? 30,
+        taxUrgentDays: (j['taxUrgentDays'] as num?)?.toInt() ?? 7,
+        accreditationWarnDays:
+            (j['accreditationWarnDays'] as num?)?.toInt() ?? 90,
+        accreditationUrgentDays:
+            (j['accreditationUrgentDays'] as num?)?.toInt() ?? 30,
+        insuranceWarnDays:
+            (j['insuranceWarnDays'] as num?)?.toInt() ?? 60,
+        insuranceUrgentDays:
+            (j['insuranceUrgentDays'] as num?)?.toInt() ?? 14,
+      );
+}
+
+/// One row from /bikes/{id}/expenses — per-bike maintenance log.
+/// Sibling shape to [Expense] but without the approval workflow
+/// fields (recorded → done, no review cycle).
+class BikeExpense {
+  final String id;
+  final String bikeId;
+  final String category; // parts | labour | mot | tax | service | other
+  final int amountPence;
+  final String occurredAt; // YYYY-MM-DD
+  final String vendor;
+  final String notes;
+  final String receiptContentType;
+  final int receiptSizeBytes;
+  final Uint8List receiptThumbBytes;
+  final String recordedById;
+  final String recordedByName;
+  final DateTime recordedAt;
+
+  const BikeExpense({
+    required this.id,
+    required this.bikeId,
+    required this.category,
+    required this.amountPence,
+    required this.occurredAt,
+    required this.vendor,
+    required this.notes,
+    required this.receiptContentType,
+    required this.receiptSizeBytes,
+    required this.receiptThumbBytes,
+    required this.recordedById,
+    required this.recordedByName,
+    required this.recordedAt,
+  });
+
+  factory BikeExpense.fromJson(Map<String, dynamic> j) => BikeExpense(
+        id: j['id'] ?? '',
+        bikeId: j['bikeId'] ?? '',
+        category: j['category'] ?? 'other',
+        amountPence: (j['amountPence'] as num?)?.toInt() ?? 0,
+        occurredAt: j['occurredAt'] ?? '',
+        vendor: j['vendor'] ?? '',
+        notes: j['notes'] ?? '',
+        receiptContentType: j['receiptContentType'] ?? 'image/jpeg',
+        receiptSizeBytes: (j['receiptSizeBytes'] as num?)?.toInt() ?? 0,
+        receiptThumbBytes: _decodeThumb(j['receiptThumb']),
+        recordedById: j['recordedBy'] ?? '',
+        recordedByName: j['recordedByName'] ?? '',
+        recordedAt: DateTime.tryParse(j['recordedAt'] ?? '')?.toLocal() ?? DateTime.now(),
+      );
+}
+
+/// Wrapper for GET /bikes/{id}/expenses — list + the year-to-date
+/// total used by the fleet card's £xxx YTD pill.
+class BikeExpensesPayload {
+  final List<BikeExpense> expenses;
+  final int ytdPence;
+  const BikeExpensesPayload({required this.expenses, required this.ytdPence});
+  factory BikeExpensesPayload.fromJson(Map<String, dynamic> j) => BikeExpensesPayload(
+        expenses: ((j['expenses'] as List?) ?? const [])
+            .map((e) => BikeExpense.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        ytdPence: (j['ytdPence'] as num?)?.toInt() ?? 0,
       );
 }
 
 /// One row from /locations — used to drive the location picker on the
-/// availability editor.
+/// availability editor, the admin Locations cards, and anywhere else
+/// a site is rendered.
+///
+/// `imageBytes` is the optional ~300×120 banner JPEG the server inlines
+/// as base64 in the list payload. Empty for rows seeded before
+/// migration 0007. Decoded uses the shared `_decodeThumb` helper so a
+/// malformed payload becomes empty bytes, never a crash.
 class LocationLite {
   final String id;
   final String name;
   final String address;
-  LocationLite({required this.id, required this.name, required this.address});
+  final Uint8List imageBytes;
+  LocationLite({
+    required this.id,
+    required this.name,
+    required this.address,
+    required this.imageBytes,
+  });
   factory LocationLite.fromJson(Map<String, dynamic> j) => LocationLite(
         id: j['ID'] ?? j['id'] ?? '',
         name: j['Name'] ?? j['name'] ?? '',
         address: j['Address'] ?? j['address'] ?? '',
+        imageBytes: _decodeThumb(j['image'] ?? j['Image']),
       );
 }
 
@@ -546,7 +688,9 @@ class RecurringSlot {
       );
 }
 
-/// Pending applicant — the manager approval queue row.
+/// Pending applicant — the manager approval queue row. Also reused for
+/// the Rejected and Approved tabs (approvedAt is null except on
+/// Approved rows).
 class PendingApplicant {
   final String userId;
   final String name;
@@ -557,6 +701,7 @@ class PendingApplicant {
   final String transmissionPreference;
   final String signupNote; // optional free-text the applicant left
   final DateTime signedUpAt;
+  final DateTime? approvedAt;
   PendingApplicant({
     required this.userId,
     required this.name,
@@ -567,6 +712,7 @@ class PendingApplicant {
     required this.transmissionPreference,
     required this.signupNote,
     required this.signedUpAt,
+    this.approvedAt,
   });
   factory PendingApplicant.fromJson(Map<String, dynamic> j) => PendingApplicant(
         userId: j['userId'] ?? '',
@@ -578,6 +724,9 @@ class PendingApplicant {
         transmissionPreference: j['transmissionPreference'] ?? '',
         signupNote: j['signupNote'] ?? '',
         signedUpAt: DateTime.tryParse(j['signedUpAt'] ?? '')?.toLocal() ?? DateTime.now(),
+        approvedAt: j['approvedAt'] == null
+            ? null
+            : DateTime.tryParse(j['approvedAt'])?.toLocal(),
       );
 }
 
@@ -694,6 +843,22 @@ class CourseTypeLite {
       );
 }
 
+/// One (course, expiry-date) entry on an instructor's record.
+/// `expiresOn` is "YYYY-MM-DD" or empty when the date is unknown.
+class Accreditation {
+  final String courseTypeId;
+  final String expiresOn;
+  const Accreditation({required this.courseTypeId, required this.expiresOn});
+  factory Accreditation.fromJson(Map<String, dynamic> j) => Accreditation(
+        courseTypeId: j['courseTypeId'] ?? '',
+        expiresOn: j['expiresOn'] ?? '',
+      );
+  Map<String, dynamic> toJson() => {
+        'courseTypeId': courseTypeId,
+        'expiresOn': expiresOn,
+      };
+}
+
 /// Admin instructors list row.
 class InstructorRow {
   final String userId;
@@ -703,7 +868,7 @@ class InstructorRow {
   final String homeLocationId;
   final String homeLocationName;
   final String accountStatus;
-  final List<String> qualifiedCourseIds;
+  final List<Accreditation> accreditations;
   InstructorRow({
     required this.userId,
     required this.name,
@@ -712,8 +877,12 @@ class InstructorRow {
     required this.homeLocationId,
     required this.homeLocationName,
     required this.accountStatus,
-    required this.qualifiedCourseIds,
+    required this.accreditations,
   });
+
+  List<String> get qualifiedCourseIds =>
+      accreditations.map((a) => a.courseTypeId).toList(growable: false);
+
   factory InstructorRow.fromJson(Map<String, dynamic> j) => InstructorRow(
         userId: j['userId'] ?? '',
         name: j['name'] ?? '',
@@ -722,7 +891,9 @@ class InstructorRow {
         homeLocationId: j['homeLocationId'] ?? '',
         homeLocationName: j['homeLocationName'] ?? '',
         accountStatus: j['accountStatus'] ?? '',
-        qualifiedCourseIds: ((j['qualifiedCourseIds'] as List?) ?? const []).cast<String>(),
+        accreditations: ((j['accreditations'] as List?) ?? const [])
+            .map((e) => Accreditation.fromJson(e as Map<String, dynamic>))
+            .toList(),
       );
 }
 
@@ -824,6 +995,12 @@ class FleetBike {
   final String currentLocationId;
   final String currentLocationName;
   final bool isCrossSite;
+  // Chunk 2 state — empty / 0 when unknown. Status is derived
+  // client-side using SchoolSettings thresholds to keep the warning
+  // bucketing reactive to settings changes without a backend refetch.
+  final String motExpiresOn; // YYYY-MM-DD, '' = unknown
+  final String taxExpiresOn; // YYYY-MM-DD, '' = unknown
+  final int currentMileageMiles; // 0 = unknown
   FleetBike({
     required this.id,
     required this.nickname,
@@ -839,6 +1016,9 @@ class FleetBike {
     required this.currentLocationId,
     required this.currentLocationName,
     required this.isCrossSite,
+    required this.motExpiresOn,
+    required this.taxExpiresOn,
+    required this.currentMileageMiles,
   });
   factory FleetBike.fromJson(Map<String, dynamic> j) => FleetBike(
         id: j['id'] ?? '',
@@ -855,6 +1035,9 @@ class FleetBike {
         currentLocationId: j['currentLocationId'] ?? '',
         currentLocationName: j['currentLocationName'] ?? '',
         isCrossSite: j['isCrossSite'] ?? false,
+        motExpiresOn: j['motExpiresOn'] ?? '',
+        taxExpiresOn: j['taxExpiresOn'] ?? '',
+        currentMileageMiles: (j['currentMileageMiles'] as num?)?.toInt() ?? 0,
       );
 }
 
@@ -933,6 +1116,9 @@ class Expense {
   final String status;
   final String receiptContentType;
   final int receiptSizeBytes;
+  // Inline 50×50 JPEG thumbnail decoded from the base64 the server
+  // ships in the list payload. Empty until the server attaches one.
+  final Uint8List receiptThumbBytes;
   final DateTime submittedAt;
   final String reviewedByName;
   final DateTime? reviewedAt;
@@ -956,6 +1142,7 @@ class Expense {
     required this.status,
     required this.receiptContentType,
     required this.receiptSizeBytes,
+    required this.receiptThumbBytes,
     required this.submittedAt,
     required this.reviewedByName,
     required this.reviewedAt,
@@ -980,6 +1167,7 @@ class Expense {
         status: j['status'] ?? 'pending',
         receiptContentType: j['receiptContentType'] ?? 'image/jpeg',
         receiptSizeBytes: (j['receiptSizeBytes'] as num?)?.toInt() ?? 0,
+        receiptThumbBytes: _decodeThumb(j['receiptThumb']),
         submittedAt: DateTime.tryParse(j['submittedAt'] ?? '')?.toLocal() ?? DateTime.now(),
         reviewedByName: j['reviewedByName'] ?? '',
         reviewedAt: DateTime.tryParse(j['reviewedAt'] ?? '')?.toLocal(),
@@ -1021,5 +1209,318 @@ class ExpensesQueuePayload {
             .map((e) => Expense.fromJson(e as Map<String, dynamic>))
             .toList(),
         pendingCount: (j['pendingCount'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// One row of the admin audit log. Mirrors the wire shape from
+/// `GET /audit` (one row per authenticated mutation).
+class AuditEntry {
+  final String id;
+  final DateTime at;
+  final String actorUserId;
+  final String actorRole;
+  final String actorName;
+  final String method;
+  final String pathPattern;
+  final String targetEntity;
+  final String targetId;
+  /// Server-resolved human label for the target (e.g. a bike's
+  /// nickname, a student's name). Empty when the entity is gone or
+  /// the route doesn't have a single named target.
+  final String targetLabel;
+  /// Handler-set one-sentence summary, populated via audit.Describe on
+  /// the backend. Preferred over the client-side verb mapping when set.
+  final String summary;
+  final int statusCode;
+  final String errorCode;
+  const AuditEntry({
+    required this.id,
+    required this.at,
+    required this.actorUserId,
+    required this.actorRole,
+    required this.actorName,
+    required this.method,
+    required this.pathPattern,
+    required this.targetEntity,
+    required this.targetId,
+    required this.targetLabel,
+    required this.summary,
+    required this.statusCode,
+    required this.errorCode,
+  });
+  factory AuditEntry.fromJson(Map<String, dynamic> j) => AuditEntry(
+        id: j['id'] ?? '',
+        at: DateTime.tryParse(j['at'] ?? '')?.toLocal() ?? DateTime.now(),
+        actorUserId: j['actorUserId'] ?? '',
+        actorRole: j['actorRole'] ?? '',
+        actorName: j['actorName'] ?? '',
+        method: j['method'] ?? '',
+        pathPattern: j['pathPattern'] ?? '',
+        targetEntity: j['targetEntity'] ?? '',
+        targetId: j['targetId'] ?? '',
+        targetLabel: j['targetLabel'] ?? '',
+        summary: j['summary'] ?? '',
+        statusCode: (j['statusCode'] as num?)?.toInt() ?? 0,
+        errorCode: j['errorCode'] ?? '',
+      );
+
+  bool get succeeded => statusCode >= 200 && statusCode < 400;
+}
+
+/// One row of the compliance dashboard — a bike's MOT + tax view.
+class ComplianceBike {
+  final String id;
+  final String nickname;
+  final String registration;
+  final String motExpiresOn;
+  final String motStatus; // unknown | ok | due_soon | due_urgent | expired
+  final String taxExpiresOn;
+  final String taxStatus;
+  final String worstStatus;
+  const ComplianceBike({
+    required this.id,
+    required this.nickname,
+    required this.registration,
+    required this.motExpiresOn,
+    required this.motStatus,
+    required this.taxExpiresOn,
+    required this.taxStatus,
+    required this.worstStatus,
+  });
+  factory ComplianceBike.fromJson(Map<String, dynamic> j) => ComplianceBike(
+        id: j['id'] ?? '',
+        nickname: j['nickname'] ?? '',
+        registration: j['registration'] ?? '',
+        motExpiresOn: j['motExpiresOn'] ?? '',
+        motStatus: j['motStatus'] ?? 'unknown',
+        taxExpiresOn: j['taxExpiresOn'] ?? '',
+        taxStatus: j['taxStatus'] ?? 'unknown',
+        worstStatus: j['worstStatus'] ?? 'unknown',
+      );
+}
+
+class ComplianceAccreditation {
+  final String courseTypeId;
+  final String courseCode;
+  final String courseName;
+  final String expiresOn;
+  final String status;
+  const ComplianceAccreditation({
+    required this.courseTypeId,
+    required this.courseCode,
+    required this.courseName,
+    required this.expiresOn,
+    required this.status,
+  });
+  factory ComplianceAccreditation.fromJson(Map<String, dynamic> j) =>
+      ComplianceAccreditation(
+        courseTypeId: j['courseTypeId'] ?? '',
+        courseCode: j['courseCode'] ?? '',
+        courseName: j['courseName'] ?? '',
+        expiresOn: j['expiresOn'] ?? '',
+        status: j['status'] ?? 'unknown',
+      );
+}
+
+class ComplianceInstructor {
+  final String userId;
+  final String name;
+  final List<ComplianceAccreditation> accreditations;
+  final String worstStatus;
+  const ComplianceInstructor({
+    required this.userId,
+    required this.name,
+    required this.accreditations,
+    required this.worstStatus,
+  });
+  factory ComplianceInstructor.fromJson(Map<String, dynamic> j) =>
+      ComplianceInstructor(
+        userId: j['userId'] ?? '',
+        name: j['name'] ?? '',
+        accreditations: ((j['accreditations'] as List?) ?? const [])
+            .map((e) => ComplianceAccreditation.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        worstStatus: j['worstStatus'] ?? 'unknown',
+      );
+}
+
+class ComplianceReport {
+  final List<ComplianceBike> bikes;
+  final List<ComplianceInstructor> instructors;
+  final String insuranceExpiresOn;
+  final String insuranceStatus;
+  final int expiredCount;
+  final int urgentCount;
+  final int warnCount;
+  final int unknownCount;
+  const ComplianceReport({
+    required this.bikes,
+    required this.instructors,
+    required this.insuranceExpiresOn,
+    required this.insuranceStatus,
+    required this.expiredCount,
+    required this.urgentCount,
+    required this.warnCount,
+    required this.unknownCount,
+  });
+  factory ComplianceReport.fromJson(Map<String, dynamic> j) {
+    final school = (j['school'] as Map<String, dynamic>?) ?? const {};
+    final counts = (j['counts'] as Map<String, dynamic>?) ?? const {};
+    return ComplianceReport(
+      bikes: ((j['bikes'] as List?) ?? const [])
+          .map((e) => ComplianceBike.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      instructors: ((j['instructors'] as List?) ?? const [])
+          .map((e) => ComplianceInstructor.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      insuranceExpiresOn: school['insuranceExpiresOn'] ?? '',
+      insuranceStatus: school['insuranceStatus'] ?? 'unknown',
+      expiredCount: (counts['expired'] as num?)?.toInt() ?? 0,
+      urgentCount: (counts['urgent'] as num?)?.toInt() ?? 0,
+      warnCount: (counts['warn'] as num?)?.toInt() ?? 0,
+      unknownCount: (counts['unknown'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+/// One row in the session-templates list.
+class SessionTemplate {
+  final String id;
+  final String courseTypeId;
+  final String courseCode;
+  final String courseName;
+  final String instructorId;
+  final String instructorName;
+  final String locationId;
+  final String locationName;
+  final int weekday; // 0..6
+  final String startsAtTime; // HH:MM
+  final int durationMinutes;
+  final int capacity;
+  final String startsOn;
+  final String endsOn;
+  final String notes;
+  const SessionTemplate({
+    required this.id,
+    required this.courseTypeId,
+    required this.courseCode,
+    required this.courseName,
+    required this.instructorId,
+    required this.instructorName,
+    required this.locationId,
+    required this.locationName,
+    required this.weekday,
+    required this.startsAtTime,
+    required this.durationMinutes,
+    required this.capacity,
+    required this.startsOn,
+    required this.endsOn,
+    required this.notes,
+  });
+  factory SessionTemplate.fromJson(Map<String, dynamic> j) => SessionTemplate(
+        id: j['id'] ?? '',
+        courseTypeId: j['courseTypeId'] ?? '',
+        courseCode: j['courseCode'] ?? '',
+        courseName: j['courseName'] ?? '',
+        instructorId: j['instructorId'] ?? '',
+        instructorName: j['instructorName'] ?? '',
+        locationId: j['locationId'] ?? '',
+        locationName: j['locationName'] ?? '',
+        weekday: (j['weekday'] as num?)?.toInt() ?? 0,
+        startsAtTime: j['startsAtTime'] ?? '',
+        durationMinutes: (j['durationMinutes'] as num?)?.toInt() ?? 0,
+        capacity: (j['capacity'] as num?)?.toInt() ?? 0,
+        startsOn: j['startsOn'] ?? '',
+        endsOn: j['endsOn'] ?? '',
+        notes: j['notes'] ?? '',
+      );
+}
+
+/// One monthly bucket from GET /revenue (billed vs collected).
+class RevenueMonth {
+  final String month; // YYYY-MM
+  final int billedPence;
+  final int collectedPence;
+  const RevenueMonth({
+    required this.month,
+    required this.billedPence,
+    required this.collectedPence,
+  });
+  factory RevenueMonth.fromJson(Map<String, dynamic> j) => RevenueMonth(
+        month: j['month'] ?? '',
+        billedPence: (j['billedPence'] as num?)?.toInt() ?? 0,
+        collectedPence: (j['collectedPence'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class AgeingBucket {
+  final String label;
+  final int pence;
+  const AgeingBucket({required this.label, required this.pence});
+  factory AgeingBucket.fromJson(Map<String, dynamic> j) => AgeingBucket(
+        label: j['label'] ?? '',
+        pence: (j['pence'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class RevenueByCourse {
+  final String courseTypeId;
+  final String code;
+  final String name;
+  final int bookingCount;
+  final int billedPence;
+  const RevenueByCourse({
+    required this.courseTypeId,
+    required this.code,
+    required this.name,
+    required this.bookingCount,
+    required this.billedPence,
+  });
+  factory RevenueByCourse.fromJson(Map<String, dynamic> j) => RevenueByCourse(
+        courseTypeId: j['courseTypeId'] ?? '',
+        code: j['code'] ?? '',
+        name: j['name'] ?? '',
+        bookingCount: (j['bookingCount'] as num?)?.toInt() ?? 0,
+        billedPence: (j['billedPence'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class RevenueReport {
+  final List<RevenueMonth> monthly;
+  final int outstandingPence;
+  final List<AgeingBucket> ageing;
+  final List<RevenueByCourse> byCourse;
+  const RevenueReport({
+    required this.monthly,
+    required this.outstandingPence,
+    required this.ageing,
+    required this.byCourse,
+  });
+  factory RevenueReport.fromJson(Map<String, dynamic> j) {
+    final m = (j['monthly'] as Map<String, dynamic>?) ?? const {};
+    return RevenueReport(
+      monthly: ((m['buckets'] as List?) ?? const [])
+          .map((e) => RevenueMonth.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      outstandingPence: (m['outstandingPence'] as num?)?.toInt() ?? 0,
+      ageing: ((j['ageing'] as List?) ?? const [])
+          .map((e) => AgeingBucket.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      byCourse: ((j['byCourse'] as List?) ?? const [])
+          .map((e) => RevenueByCourse.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
+class AuditPage {
+  final List<AuditEntry> entries;
+  final int total;
+  const AuditPage({required this.entries, required this.total});
+  factory AuditPage.fromJson(Map<String, dynamic> j) => AuditPage(
+        entries: ((j['entries'] as List?) ?? const [])
+            .map((e) => AuditEntry.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        total: (j['total'] as num?)?.toInt() ?? 0,
       );
 }

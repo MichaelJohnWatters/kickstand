@@ -142,12 +142,41 @@ class _NotifTile extends StatelessWidget {
         return 'Your booking needs reassignment';
       case 'disruption.resolved':
         return p['resolution'] == 'swapped' ? 'Bike swapped for your booking' : 'Booking cancelled (bike issue)';
+      case 'waitlist.promoted':
+        return 'Booked from the waitlist';
     }
     return n.eventKind;
   }
 
   String _body(AppNotification n) {
     final p = n.payload;
+    // Disruption notifications carry richer context — pair the course
+    // with the session date so the cell reads as a meaningful
+    // sentence, and surface the new bike on a successful swap.
+    if (n.eventKind == 'disruption.resolved' ||
+        n.eventKind == 'disruption.affected_booking') {
+      final parts = <String>[];
+      if ((p['courseName'] ?? '').toString().isNotEmpty) {
+        parts.add(p['courseName'].toString());
+      }
+      final startsRaw = (p['sessionStartsAt'] ?? '').toString();
+      if (startsRaw.isNotEmpty) {
+        final t = DateTime.tryParse(startsRaw)?.toLocal();
+        if (t != null) {
+          parts.add(DateFormat('EEE d MMM · HH:mm').format(t));
+        }
+      }
+      if (n.eventKind == 'disruption.resolved' &&
+          p['resolution'] == 'swapped' &&
+          (p['newBikeNickname'] ?? '').toString().isNotEmpty) {
+        parts.add('now on ${p['newBikeNickname']}');
+      }
+      if (n.eventKind == 'disruption.resolved' &&
+          p['resolution'] == 'cancel_with_approval') {
+        parts.add('cancelled by the school');
+      }
+      return parts.join(' · ');
+    }
     if (p['courseName'] != null) return p['courseName'].toString();
     if (p['newCourseName'] != null) return p['newCourseName'].toString();
     return '';

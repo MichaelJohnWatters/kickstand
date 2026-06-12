@@ -1,6 +1,7 @@
 package httpapi_test
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -246,44 +247,138 @@ func TestAdmin_Competencies_CRUD(t *testing.T) {
 
 // ----- Instructors -----
 
-func TestAdmin_InviteInstructor_AndSetQualifications(t *testing.T) {
+func TestAdmin_InviteInstructor_AndSetAccreditations(t *testing.T) {
 	f := newLedgerFixture(t)
 
 	resp, body := f.do("POST", "/instructors", map[string]any{
 		"name": "Priya P", "email": "priya@test.com", "phone": "07700900000",
 		"password": "longenoughpw", "homeLocationId": "loc_t",
-		"qualifiedCourseIds": []string{"ct_cbt"},
+		"accreditations": []map[string]any{
+			{"courseTypeId": "ct_cbt", "expiresOn": "2027-01-01"},
+		},
 	}, f.adminToken)
 	if resp.StatusCode != 201 {
 		t.Fatalf("invite: %d body=%s", resp.StatusCode, body)
 	}
 	var i struct {
-		UserID             string   `json:"userId"`
-		QualifiedCourseIDs []string `json:"qualifiedCourseIds"`
+		UserID         string `json:"userId"`
+		Accreditations []struct {
+			CourseTypeID string `json:"courseTypeId"`
+			ExpiresOn    string `json:"expiresOn"`
+		} `json:"accreditations"`
 	}
 	json.Unmarshal(body, &i)
-	if len(i.QualifiedCourseIDs) != 1 {
-		t.Errorf("expected 1 qual, got %d", len(i.QualifiedCourseIDs))
+	if len(i.Accreditations) != 1 {
+		t.Errorf("expected 1 accreditation, got %d", len(i.Accreditations))
+	} else if i.Accreditations[0].ExpiresOn != "2027-01-01" {
+		t.Errorf("expected expiresOn 2027-01-01, got %q", i.Accreditations[0].ExpiresOn)
 	}
 
-	// New instructor can log in (proves InviteInstructor wired the password)
-	resp, body = f.do("POST", "/auth/login",
-		map[string]string{"email": "priya@test.com", "password": "longenoughpw"}, "")
-	if resp.StatusCode != 200 {
-		t.Errorf("login: %d body=%s", resp.StatusCode, body)
+	// InviteInstructor should have created a Firebase user with UID
+	// pinned to the local user_id, and stored that UID on the row.
+	var firebaseUID string
+	if err := f.db.QueryRow(`SELECT COALESCE(firebase_uid, '') FROM users WHERE id = ?`, i.UserID).
+		Scan(&firebaseUID); err != nil {
+		t.Fatalf("read firebase_uid: %v", err)
+	}
+	if firebaseUID == "" {
+		t.Error("expected firebase_uid to be set on invited instructor")
+	}
+	if firebaseUID != i.UserID {
+		t.Errorf("expected firebase_uid to equal user_id (UID pinning), got %q vs %q", firebaseUID, i.UserID)
+	}
+	if _, err := f.fb.Auth.GetUser(context.Background(), firebaseUID); err != nil {
+		t.Errorf("Firebase user not found: %v", err)
+	}
+	t.Cleanup(func() { _ = f.fb.Auth.DeleteUser(context.Background(), firebaseUID) })
+
+	// Duplicate-email invite — Firebase rejects and our handler maps it
+	// to a 409 with the right code.
+	resp, body = f.do("POST", "/instructors", map[string]any{
+		"name": "Priya Twin", "email": "priya@test.com",
+		"password": "longenoughpw", "homeLocationId": "loc_t",
+	}, f.adminToken)
+	if resp.StatusCode != 409 {
+		t.Errorf("expected 409 duplicate, got %d body=%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "email_in_use") {
+		t.Errorf("expected email_in_use code, got %s", body)
 	}
 
-	// Clear quals
-	resp, _ = f.do("PUT", "/instructors/"+i.UserID+"/qualifications",
-		map[string]any{"courseTypeIds": []string{}}, f.adminToken)
+	// Clear accreditations
+	resp, _ = f.do("PUT", "/instructors/"+i.UserID+"/accreditations",
+		map[string]any{"accreditations": []map[string]any{}}, f.adminToken)
 	if resp.StatusCode != 204 {
-		t.Errorf("clear quals: %d", resp.StatusCode)
+		t.Errorf("clear accreditations: %d", resp.StatusCode)
 	}
 
 	// List
 	resp, body = f.do("GET", "/instructors", nil, f.adminToken)
 	if !strings.Contains(string(body), "Priya P") {
 		t.Errorf("expected Priya in list, got %s", body)
+	}
+}
+
+// ----- Students -----
+
+func TestAdmin_CreateStudent(t *testing.T) {
+	f := newLedgerFixture(t)
+
+	resp, body := f.do("POST", "/students", map[string]any{
+		"name": "Rowan New", "email": "rowan-new@test.com",
+		"phone": "07700900111", "password": "longenoughpw",
+	}, f.adminToken)
+	if resp.StatusCode != 201 {
+		t.Fatalf("create: %d body=%s", resp.StatusCode, body)
+	}
+	var st struct {
+		ID            string `json:"id"`
+		Stage         string `json:"stage"`
+		AccountStatus string `json:"accountStatus"`
+		BalancePence  int    `json:"balancePence"`
+	}
+	if err := json.Unmarshal(body, &st); err != nil {
+		t.Fatalf("decode: %v body=%s", err, body)
+	}
+	if st.Stage != "Pre-CBT" || st.AccountStatus != "active" || st.BalancePence != 0 {
+		t.Errorf("unexpected initial row: %+v", st)
+	}
+
+	// Firebase identity should exist and be pinned to the local user_id.
+	var firebaseUID string
+	if err := f.db.QueryRow(`SELECT COALESCE(firebase_uid, '') FROM users WHERE id = ?`, st.ID).
+		Scan(&firebaseUID); err != nil {
+		t.Fatalf("read firebase_uid: %v", err)
+	}
+	if firebaseUID != st.ID {
+		t.Errorf("expected firebase_uid == user_id, got %q vs %q", firebaseUID, st.ID)
+	}
+	if _, err := f.fb.Auth.GetUser(context.Background(), firebaseUID); err != nil {
+		t.Errorf("Firebase user not found: %v", err)
+	}
+	t.Cleanup(func() { _ = f.fb.Auth.DeleteUser(context.Background(), firebaseUID) })
+
+	// New student must show up in GET /students.
+	resp, body = f.do("GET", "/students", nil, f.adminToken)
+	if resp.StatusCode != 200 || !strings.Contains(string(body), "Rowan New") {
+		t.Errorf("expected Rowan in list, got %d body=%s", resp.StatusCode, body)
+	}
+
+	// Duplicate-email — Firebase rejects, handler returns 409.
+	resp, body = f.do("POST", "/students", map[string]any{
+		"name": "Rowan Twin", "email": "rowan-new@test.com",
+		"password": "longenoughpw",
+	}, f.adminToken)
+	if resp.StatusCode != 409 || !strings.Contains(string(body), "email_in_use") {
+		t.Errorf("expected 409 email_in_use, got %d body=%s", resp.StatusCode, body)
+	}
+
+	// Short password rejected before we hit Firebase.
+	resp, _ = f.do("POST", "/students", map[string]any{
+		"name": "Short Pw", "email": "shortpw@test.com", "password": "abc",
+	}, f.adminToken)
+	if resp.StatusCode != 400 {
+		t.Errorf("expected 400 for short password, got %d", resp.StatusCode)
 	}
 }
 

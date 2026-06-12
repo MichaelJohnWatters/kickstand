@@ -20,35 +20,30 @@ func newLedgerFixture(t *testing.T) *ledgerFixture {
 	t.Helper()
 	f := newAPIFixture(t)
 
-	// Add an admin user
-	hash, err := hashPasswordHelper(f.password)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Add an admin user. password_hash is vestigial NOT NULL — empty string.
 	if _, err := f.db.Exec(`INSERT INTO users (id, school_id, email, password_hash, name, role, account_status, created_at)
-	                       VALUES ('user_admin','school_t','admin@test',?,'Admin','admin','active',?)`,
-		hash, f.now.Format(time.RFC3339)); err != nil {
+	                       VALUES ('user_admin','school_t','admin@test','','Admin','admin','active',?)`,
+		f.now.Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}
 
 	lf := &ledgerFixture{apiFixture: f}
-	lf.adminToken = lf.loginAs("admin@test")
+	lf.adminToken = lf.mintToken("user_admin")
 	lf.studentToken = lf.loginStudent()
 	return lf
 }
 
+// loginAs resolves an email to a local user id and mints a Firebase ID
+// token for it via the emulator. Convenience wrapper around mintToken.
 func (lf *ledgerFixture) loginAs(email string) string {
 	lf.t.Helper()
-	resp, body := lf.do("POST", "/auth/login",
-		map[string]string{"email": email, "password": lf.password}, "")
-	if resp.StatusCode != 200 {
-		lf.t.Fatalf("login %s: status=%d body=%s", email, resp.StatusCode, body)
+	var id string
+	if err := lf.db.QueryRow(
+		`SELECT id FROM users WHERE email = ?`, email,
+	).Scan(&id); err != nil {
+		lf.t.Fatalf("loginAs %q: %v", email, err)
 	}
-	var out struct{ Token string }
-	if err := json.Unmarshal(body, &out); err != nil {
-		lf.t.Fatal(err)
-	}
-	return out.Token
+	return lf.mintToken(id)
 }
 
 // ----- Tests -----
@@ -106,11 +101,9 @@ func TestLedger_StudentCanViewOwnLedger(t *testing.T) {
 
 func TestLedger_StudentCannotViewOthersLedger(t *testing.T) {
 	f := newLedgerFixture(t)
-	// Make a second student
-	hash, _ := hashPasswordHelper(f.password)
 	if _, err := f.db.Exec(`INSERT INTO users (id, school_id, email, password_hash, name, role, account_status, created_at)
-	                       VALUES ('user_stu2','school_t','stu2@test',?,'Stu2','student','active',?)`,
-		hash, f.now.Format(time.RFC3339)); err != nil {
+	                       VALUES ('user_stu2','school_t','stu2@test','','Stu2','student','active',?)`,
+		f.now.Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}
 	resp, _ := f.do("GET", "/students/user_stu2/ledger", nil, f.studentToken)
@@ -194,8 +187,3 @@ func TestLedger_VoidCharge(t *testing.T) {
 	}
 }
 
-// hashPasswordHelper avoids importing the auth package in the test file's
-// other helpers (server_test.go already uses it).
-func hashPasswordHelper(plain string) (string, error) {
-	return authHashPassword(plain)
-}

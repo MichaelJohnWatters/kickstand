@@ -17,7 +17,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 
 import '../state/providers.dart';
+import '../state/school.dart';
 import '../theme/tokens.dart';
+import '../util/bike_warnings.dart';
 
 final _todaySessionsProvider =
     FutureProvider<List<Map<String, dynamic>>>((ref) async {
@@ -59,6 +61,9 @@ class AdminOverviewScreen extends ConsumerWidget {
         ref.invalidate(openDisruptionsProvider);
         ref.invalidate(logisticsForDateProvider);
         ref.invalidate(pendingSignupsCountProvider);
+        ref.invalidate(expensesForReviewProvider);
+        ref.invalidate(schoolSettingsProvider);
+        ref.invalidate(openFollowupsProvider);
       },
       child: ListView(
         padding: const EdgeInsets.all(24),
@@ -312,6 +317,10 @@ class _NeedsAttention extends ConsumerWidget {
     final disruptions = ref.watch(openDisruptionsProvider);
     final logistics = ref.watch(tomorrowLogisticsProvider);
     final pending = ref.watch(pendingSignupsCountProvider);
+    final fleet = ref.watch(fleetProvider);
+    final settings = ref.watch(schoolSettingsProvider).valueOrNull;
+    final expensesQueue = ref.watch(expensesForReviewProvider).valueOrNull;
+    final followups = ref.watch(openFollowupsProvider).valueOrNull;
 
     final disruptionList = disruptions.valueOrNull ?? const [];
     final openDisruptions = disruptionList.where((d) {
@@ -322,6 +331,35 @@ class _NeedsAttention extends ConsumerWidget {
 
     final movesCount = (logistics.valueOrNull?['totalMoves'] as num?)?.toInt() ?? 0;
     final pendingCount = pending;
+    final reimbursementsPending = expensesQueue?.pendingCount ?? 0;
+
+    // Urgent docs: bikes whose worst-of-MOT/tax bucket is dueUrgent or
+    // expired, using the school's configured thresholds. Computed
+    // client-side so the warning thresholds in /admin/settings change
+    // this surface immediately without a backend round-trip.
+    final bikes = fleet.valueOrNull ?? const [];
+    final motWarn = settings?.motWarnDays ?? 90;
+    final motUrgent = settings?.motUrgentDays ?? 14;
+    final taxWarn = settings?.taxWarnDays ?? 30;
+    final taxUrgent = settings?.taxUrgentDays ?? 7;
+    var docsExpired = 0;
+    var docsUrgent = 0;
+    for (final b in bikes) {
+      final mot = bucketExpiry(b.motExpiresOn,
+          warnDays: motWarn, urgentDays: motUrgent);
+      final tax = bucketExpiry(b.taxExpiresOn,
+          warnDays: taxWarn, urgentDays: taxUrgent);
+      final isExpired =
+          mot == BikeWarning.expired || tax == BikeWarning.expired;
+      final isUrgent =
+          mot == BikeWarning.dueUrgent || tax == BikeWarning.dueUrgent;
+      if (isExpired) {
+        docsExpired += 1;
+      } else if (isUrgent) {
+        docsUrgent += 1;
+      }
+    }
+    final docsTotal = docsExpired + docsUrgent;
 
     final cards = <Widget>[];
     if (openDisruptions.isNotEmpty) {
@@ -340,6 +378,56 @@ class _NeedsAttention extends ConsumerWidget {
         accent: true,
       ));
     }
+    // Overdue incident follow-ups — sit just under disruptions
+    // because the legal/duty-of-care exposure is comparable.
+    final overdueFollowups = followups?.overdue ?? 0;
+    final openFollowupsCount = followups?.open ?? 0;
+    if (overdueFollowups > 0) {
+      cards.add(_AttentionCard(
+        tone: KsColors.danger,
+        icon: Icons.report_problem_outlined,
+        title: '$overdueFollowups incident follow-up${overdueFollowups == 1 ? '' : 's'} overdue',
+        subtitle: openFollowupsCount > overdueFollowups
+            ? '$openFollowupsCount open in total — mechanical, welfare, insurance.'
+            : 'Mechanical inspection, welfare call, or insurance notification still outstanding.',
+        cta: 'Review',
+        ctaPrimary: true,
+        onTap: () => context.go('/admin/incidents'),
+        accent: true,
+      ));
+    } else if (openFollowupsCount > 0) {
+      cards.add(_AttentionCard(
+        tone: KsColors.warning,
+        icon: Icons.report_problem_outlined,
+        title: '$openFollowupsCount incident follow-up${openFollowupsCount == 1 ? '' : 's'} open',
+        subtitle: 'Tick off the ones that have been handled.',
+        cta: '',
+        ctaPrimary: false,
+        onTap: () => context.go('/admin/incidents'),
+      ));
+    }
+    if (docsTotal > 0) {
+      // Expired wins the tone — a bike with an out-of-date MOT/tax is
+      // illegal to ride; "due soon" can wait.
+      final hasExpired = docsExpired > 0;
+      final tone = hasExpired ? KsColors.danger : KsColors.warning;
+      final title = hasExpired
+          ? '$docsExpired bike${docsExpired == 1 ? '' : 's'} with expired MOT or tax'
+          : '$docsUrgent bike${docsUrgent == 1 ? '' : 's'} with MOT or tax due soon';
+      final subtitle = hasExpired && docsUrgent > 0
+          ? 'Plus $docsUrgent due in the urgent window.'
+          : 'Renew before the next session to keep the bike road-legal.';
+      cards.add(_AttentionCard(
+        tone: tone,
+        icon: Icons.directions_car_filled_outlined,
+        title: title,
+        subtitle: subtitle,
+        cta: '',
+        ctaPrimary: false,
+        onTap: () => context.go('/admin/fleet'),
+        accent: hasExpired,
+      ));
+    }
     if (movesCount > 0) {
       cards.add(_AttentionCard(
         tone: KsColors.warning,
@@ -349,6 +437,17 @@ class _NeedsAttention extends ConsumerWidget {
         cta: '',
         ctaPrimary: false,
         onTap: () => context.go('/admin/logistics'),
+      ));
+    }
+    if (reimbursementsPending > 0) {
+      cards.add(_AttentionCard(
+        tone: KsColors.warning,
+        icon: Icons.receipt_long_outlined,
+        title: '$reimbursementsPending expense${reimbursementsPending == 1 ? '' : 's'} awaiting review',
+        subtitle: 'Approve, reject, or mark reimbursed.',
+        cta: '',
+        ctaPrimary: false,
+        onTap: () => context.go('/admin/reimbursements'),
       ));
     }
     if (pendingCount > 0) {
@@ -526,7 +625,7 @@ class _AllClearCard extends StatelessWidget {
                         fontWeight: FontWeight.w800, fontSize: 14.5)),
                 const SizedBox(height: 2),
                 const Text(
-                  'No disruptions, moves, or sign-ups waiting on you.',
+                  'No disruptions, urgent docs, moves, reimbursements, or sign-ups waiting on you.',
                   style: TextStyle(color: KsColors.ink3, fontSize: 12.5),
                 ),
               ],

@@ -14,6 +14,7 @@ import '../api/models.dart';
 import '../state/providers.dart';
 import '../state/school.dart';
 import '../theme/tokens.dart';
+import '../widgets/empty_state.dart';
 
 class AdminCourseTypesScreen extends ConsumerWidget {
   const AdminCourseTypesScreen({super.key});
@@ -57,7 +58,7 @@ class AdminCourseTypesScreen extends ConsumerWidget {
               padding: EdgeInsets.symmetric(vertical: 32),
               child: Center(child: CircularProgressIndicator(color: KsColors.primary)),
             ),
-            error: (e, _) => Text('Couldn’t load.\n$e'),
+            error: (e, _) => KsEmptyState.error(message: e.toString()),
             data: (types) {
               if (types.isEmpty) {
                 return Container(
@@ -111,14 +112,14 @@ class _CourseTypeCardState extends ConsumerState<_CourseTypeCard> {
   Future<void> _delete() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: const Text('Delete this course type?'),
         content: Text(
             '${widget.courseType.name} will be removed if no sessions, competencies or qualifications reference it.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(dialogCtx, false), child: const Text('Cancel')),
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogCtx, true),
             child: const Text('Delete', style: TextStyle(color: KsColors.danger)),
           ),
         ],
@@ -673,13 +674,13 @@ class _CompetenciesSheetState extends ConsumerState<_CompetenciesSheet> {
   Future<void> _delete(Competency c) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: const Text('Remove competency?'),
         content: Text('"${c.label}" will be removed if no assessments reference it.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(dialogCtx, false), child: const Text('Cancel')),
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogCtx, true),
             child: const Text('Remove', style: TextStyle(color: KsColors.danger)),
           ),
         ],
@@ -739,7 +740,7 @@ class _CompetenciesSheetState extends ConsumerState<_CompetenciesSheet> {
                   padding: EdgeInsets.symmetric(vertical: 24),
                   child: Center(child: CircularProgressIndicator(color: KsColors.primary)),
                 ),
-                error: (e, _) => Text('Couldn’t load.\n$e'),
+                error: (e, _) => KsEmptyState.error(message: e.toString()),
                 data: (list) {
                   if (list.isEmpty) {
                     return const Padding(

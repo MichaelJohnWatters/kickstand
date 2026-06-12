@@ -1,0 +1,27 @@
+{
+  "expenses": [
+    {
+      "amountPence": 950,
+      "categoryIcon": "cap",
+      "categoryId": "lunch",
+      "categoryLabel": "Lunch",
+      "categoryTone": 70,
+      "id": "exp_dave_lunch_approved",
+      "instructorId": "user_instr_dave",
+      "instructorName": "Dave Mitchell",
+      "notes": "",
+      "occurredAt": "2026-06-05T09:00:00Z",
+      "receiptContentType": "image/jpeg",
+      "receiptSizeBytes": 19502,
+      "receiptThumb": "/9j/2wCEAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk8BDg4OExETJhUVJk81LTVPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT//AABEIADIAMgMBIgACEQEDEQH/xAGiAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgsQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+gEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoLEQACAQIEBAMEBwUEBAABAncAAQIDEQQFITEGEkFRB2FxEyIygQgUQpGhscEJIzNS8BVictEKFiQ04SXxFxgZGiYnKCkqNTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqCg4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2dri4+Tl5ufo6ery8/T19vf4+fr/2gAMAwEAAhEDEQA/AO7vJktZFVNLmuAwzuhjUgexyRVf7f8A9QG+/wC/Sf41oXlsl1blGijlI5USZ2598Vmf2RL/ANA/Tv8Avt/8KlRj2Af9v/6gN9/36T/Gj7f/ANQG+/79J/jTP7Il/wCgfp3/AH2/+FH9kS/9A/Tv++3/AMKfLHsA/wC3/wDUBvv+/Sf40+G7EsyRnRbuMMcF3iTavueah/siX/oH6d/32/8AhV3T7AWxaRra3ikPAMJY8e+aXLHsBZ8iH/njH/3yKPIh/wCeMf8A3yKkopcsewyhqdiLrY6xGSReMG4eIY/4D1rIa1gRyji2VlOCDq0gI/St25mu43UW1mJ1I5JmCYPpyKotdyliW0y0J7k3KZ/lVoRn/Z7b1tP/AAbyUfZ7b1tP/BvJV/7VJ/0C7P8A8CY/8KPtUn/QLs//AAJj/wAKYFD7Pbetp/4N5Kv2GmBZ0meHaq/MjJeySAntwcAij7VJ/wBAuz/8CY/8KtW9zeuyA6eiRHjetwrAD6Ac0gL1FFFIY2QOY2ETKr4+UsMgH6VmHS5ickaYSf8Apy/+yqbULK7upUa21Oa0VVwVRAwY+vNVP7I1P/oYbr/vylMRL/Zc3ppn/gF/9lR/Zc3ppn/gF/8AZVF/ZGp/9DDdf9+Uo/sjU/8AoYbr/vylAEv9lzemmf8AgF/9lV60ilhi8uVoSAflEUewAfTJrM/sjU/+hhuv+/KVLb6ZqEVxHJLrlxMitlo2iUBh6UAatFFFIYUUUUAFFFFABRRRQAUUUUAf/9k=",
+      "reviewedAt": "2026-06-05T13:00:00Z",
+      "reviewedBy": "user_owen",
+      "reviewedByName": "Owen O'Neill",
+      "reviewerNote": "OK once — keep within sensible limits.",
+      "status": "approved",
+      "submittedAt": "2026-06-05T09:00:00Z",
+      "where": "Boucher caff"
+    }
+  ],
+  "pendingCount": 4
+}

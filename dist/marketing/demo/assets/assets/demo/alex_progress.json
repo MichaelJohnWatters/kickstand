@@ -1,0 +1,13 @@
+{
+  "courses": [
+    {
+      "competencies": [],
+      "competentCount": 0,
+      "courseName": "CBT 125",
+      "courseTypeId": "ct_cbt_125",
+      "needsWorkCount": 0,
+      "totalCompetencies": 0
+    }
+  ],
+  "studentId": "user_student_alex"
+}

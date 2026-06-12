@@ -1,5 +1,5 @@
-// Welcome — indigo full-bleed per the design handoff. Two CTAs: create
-// account (deferred — we don't have signup screens yet) vs sign-in.
+// Welcome — indigo full-bleed per the design handoff. Two CTAs:
+// create account (Firebase signup → /signup) vs sign-in.
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -81,14 +81,15 @@ class WelcomeScreen extends StatelessWidget {
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton(
-                  onPressed: null, // signup screens come later
+                  onPressed: () => context.go('/signup'),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white.withValues(alpha: 0.4),
-                    side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
+                    foregroundColor: Colors.white,
+                    side: BorderSide(color: Colors.white.withValues(alpha: 0.7)),
                     padding: const EdgeInsets.symmetric(vertical: 16),
+                    textStyle: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700, fontSize: 15),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(KsRadius.md)),
                   ),
-                  child: const Text('Create account (coming soon)'),
+                  child: const Text('Create account'),
                 ),
               ),
             ],

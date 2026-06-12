@@ -44,6 +44,7 @@ const (
 	EventBikeOffline         = "bike.offline"
 	EventDisruptionAffected  = "disruption.affected_booking"
 	EventDisruptionResolved  = "disruption.resolved"
+	EventWaitlistPromoted    = "waitlist.promoted"
 )
 
 // ----- Producer hooks (called inside engine transactions) -----
@@ -105,6 +106,23 @@ func OnBookingRescheduled(ctx context.Context, scope *tenant.Scope, oldBooking, 
 	return insertNotification(ctx, scope, eventID, newBooking.StudentID, CategoryBooking)
 }
 
+// OnWaitlistPromoted tells the student they were auto-booked from the
+// waitlist. Fires from cancelInTx inside the same transaction as the
+// new booking, so the notification can never reference a booking that
+// doesn't exist.
+func OnWaitlistPromoted(ctx context.Context, scope *tenant.Scope, b domain.Booking, courseName string) error {
+	payload := map[string]any{
+		"bookingId":  b.ID,
+		"sessionId":  b.SessionID,
+		"courseName": courseName,
+	}
+	eventID, err := insertEvent(ctx, scope, EventWaitlistPromoted, string(b.ID), payload)
+	if err != nil {
+		return err
+	}
+	return insertNotification(ctx, scope, eventID, b.StudentID, CategoryBooking)
+}
+
 // OnBikeOffline pings admins (urgent: their attention may be needed for
 // affected bookings). The disruption flow separately emits per-affected
 // booking notifications via OnDisruptionAffected.
@@ -126,10 +144,22 @@ func OnBikeOffline(ctx context.Context, scope *tenant.Scope, bikeID domain.BikeI
 // to know so a surprise "your bike was swapped" doesn't feel like silent
 // magic.
 func OnDisruptionAffected(ctx context.Context, scope *tenant.Scope, b domain.Booking, disruptionID domain.DisruptionID) error {
+	var courseName, startsAt string
+	_ = scope.Conn().QueryRowContext(ctx, `
+		SELECT COALESCE(ct.name, ''), COALESCE(s.starts_at, '')
+		FROM bookings b
+		JOIN sessions s     ON s.id = b.session_id AND s.school_id = b.school_id
+		JOIN course_types ct ON ct.id = s.course_type_id AND ct.school_id = s.school_id
+		WHERE b.id = ? AND b.school_id = ?
+	`, string(b.ID), string(scope.SchoolID())).
+		Scan(&courseName, &startsAt)
+
 	payload := map[string]any{
-		"bookingId":    b.ID,
-		"sessionId":    b.SessionID,
-		"disruptionId": disruptionID,
+		"bookingId":       b.ID,
+		"sessionId":       b.SessionID,
+		"disruptionId":    disruptionID,
+		"courseName":      courseName,
+		"sessionStartsAt": startsAt,
 	}
 	eventID, err := insertEvent(ctx, scope, EventDisruptionAffected, string(b.ID), payload)
 	if err != nil {
@@ -139,13 +169,41 @@ func OnDisruptionAffected(ctx context.Context, scope *tenant.Scope, b domain.Boo
 }
 
 // OnDisruptionResolved tells the student about the outcome. Resolution is
-// either 'swapped' or 'cancel_with_approval'.
+// either 'swapped' or 'cancel_with_approval'. We enrich the payload with
+// the course name, session start time and new bike's nickname so the
+// student's notification cell can render something useful ("CBT-125 ·
+// Sat 14 Jun 09:00 — swapped to Honda CB125F") instead of a bare title.
 func OnDisruptionResolved(ctx context.Context, scope *tenant.Scope, b domain.Booking, disruptionID domain.DisruptionID, resolution string) error {
+	var (
+		courseName, startsAt, newBikeNickname string
+	)
+	// Best-effort lookup — the notification fires from inside the
+	// engine tx, so we use the same scope. If anything fails we still
+	// emit the event with whatever we have; the title path on the
+	// client tolerates missing fields.
+	_ = scope.Conn().QueryRowContext(ctx, `
+		SELECT COALESCE(ct.name, ''), COALESCE(s.starts_at, ''),
+		       COALESCE(bk.nickname, '')
+		FROM bookings b
+		JOIN sessions s     ON s.id = b.session_id AND s.school_id = b.school_id
+		JOIN course_types ct ON ct.id = s.course_type_id AND ct.school_id = s.school_id
+		LEFT JOIN bikes bk  ON bk.id = b.bike_id AND bk.school_id = b.school_id
+		WHERE b.id = ? AND b.school_id = ?
+	`, string(b.ID), string(scope.SchoolID())).
+		Scan(&courseName, &startsAt, &newBikeNickname)
+
 	payload := map[string]any{
-		"bookingId":    b.ID,
-		"sessionId":    b.SessionID,
-		"disruptionId": disruptionID,
-		"resolution":   resolution,
+		"bookingId":       b.ID,
+		"sessionId":       b.SessionID,
+		"disruptionId":    disruptionID,
+		"resolution":      resolution,
+		"courseName":      courseName,
+		"sessionStartsAt": startsAt,
+	}
+	// Bike nickname is only meaningful on the swap path — on cancel
+	// the booking's bike_id was already cleared (or is irrelevant).
+	if resolution == "swapped" && newBikeNickname != "" {
+		payload["newBikeNickname"] = newBikeNickname
 	}
 	eventID, err := insertEvent(ctx, scope, EventDisruptionResolved, string(b.ID), payload)
 	if err != nil {

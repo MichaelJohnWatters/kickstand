@@ -1,0 +1,29 @@
+{
+  "balance": {
+    "balancePence": 3000,
+    "totalChargedPence": 13000,
+    "totalPaidPence": 10000
+  },
+  "entries": [
+    {
+      "amountPence": 13000,
+      "at": "2026-06-01T09:00:00Z",
+      "description": "CBT (125cc) — Belfast",
+      "id": "chg_alex_cbt",
+      "kind": "charge",
+      "method": "",
+      "recordedBy": "user_owen",
+      "voided": false
+    },
+    {
+      "amountPence": 10000,
+      "at": "2026-06-01T09:00:00Z",
+      "description": "Cash deposit on the day",
+      "id": "pay_alex_partial",
+      "kind": "payment",
+      "method": "cash",
+      "recordedBy": "user_owen",
+      "voided": false
+    }
+  ]
+}

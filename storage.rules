@@ -1,0 +1,22 @@
+rules_version = '2';
+
+// Kickstand storage rules — DENY ALL client access.
+//
+// We never let Flutter (or any client SDK) talk to Firebase Storage
+// directly. The Go backend reads/writes with service-account creds and
+// streams the bytes through `GET /expenses/{id}/receipt`, where the
+// existing role + ownership checks live (see auth_coverage_test.go).
+//
+// These rules are defense in depth: even if a service-account key
+// leaked into a Flutter build or someone reached for `firebase_storage`,
+// no client identity can fetch or upload anything.
+//
+// Service accounts bypass rules entirely, so the Go server is
+// unaffected.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

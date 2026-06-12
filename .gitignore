@@ -16,3 +16,7 @@
 .env.*
 !.env.example
 .DS_Store
+
+# Firebase emulator log
+firebase-debug.log
+firebase-debug.*.log

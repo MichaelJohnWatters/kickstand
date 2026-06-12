@@ -1,6 +1,8 @@
-// Admin Instructors — staff cards with home location + qualifications + actions.
-// Invite modal asks for name/email/phone/password/home/quals. Per-row Edit
-// opens a qualifications picker.
+// Admin Instructors — staff cards with home location + per-course
+// accreditations (with expiry dates) + actions. Invite modal collects
+// name/email/phone/password/home plus a starter list of accreditations.
+// Per-row "Edit accreditations" opens a sheet with one date picker per
+// course the instructor holds.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,6 +12,7 @@ import '../api/models.dart';
 import '../state/providers.dart';
 import '../state/school.dart';
 import '../theme/tokens.dart';
+import '../widgets/empty_state.dart';
 
 class AdminInstructorsScreen extends ConsumerWidget {
   const AdminInstructorsScreen({super.key});
@@ -47,7 +50,7 @@ class AdminInstructorsScreen extends ConsumerWidget {
               padding: EdgeInsets.symmetric(vertical: 32),
               child: Center(child: CircularProgressIndicator(color: KsColors.primary)),
             ),
-            error: (e, _) => Text('Couldn’t load.\n$e'),
+            error: (e, _) => KsEmptyState.error(message: e.toString()),
             data: (instructors) {
               if (instructors.isEmpty) {
                 return Container(
@@ -211,17 +214,17 @@ class _InstructorCard extends ConsumerWidget {
             _row(Icons.home_outlined, 'Home: ${instructor.homeLocationName}'),
           const SizedBox(height: 10),
           Text(
-            'Qualifications · ${instructor.qualifiedCourseIds.length}',
+            'Accreditations · ${instructor.accreditations.length}',
             style: const TextStyle(
                 color: KsColors.ink3, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.4),
           ),
           const SizedBox(height: 6),
-          _QualsRow(courseIds: instructor.qualifiedCourseIds),
+          _AccreditationsRow(accreditations: instructor.accreditations),
           const SizedBox(height: 12),
           OutlinedButton.icon(
-            onPressed: () => _showEditQualsSheet(context, ref, instructor),
+            onPressed: () => _showEditAccreditationsSheet(context, ref, instructor),
             icon: const Icon(Icons.edit_outlined, size: 16),
-            label: const Text('Edit qualifications'),
+            label: const Text('Edit accreditations'),
             style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(34)),
           ),
         ],
@@ -243,28 +246,29 @@ class _InstructorCard extends ConsumerWidget {
       );
 }
 
-class _QualsRow extends ConsumerWidget {
-  final List<String> courseIds;
-  const _QualsRow({required this.courseIds});
+class _AccreditationsRow extends ConsumerWidget {
+  final List<Accreditation> accreditations;
+  const _AccreditationsRow({required this.accreditations});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    if (courseIds.isEmpty) {
-      return const Text('Not qualified for any course yet.',
+    if (accreditations.isEmpty) {
+      return const Text('Not accredited for any course yet.',
           style: TextStyle(color: KsColors.ink3, fontSize: 12, fontStyle: FontStyle.italic));
     }
     final types = ref.watch(courseTypesProvider).valueOrNull ?? const [];
     final byId = {for (final c in types) c.id: c};
     return Wrap(
       spacing: 6, runSpacing: 6,
-      children: courseIds.map((id) {
-        final c = byId[id];
+      children: accreditations.map((a) {
+        final c = byId[a.courseTypeId];
+        final dateLabel = a.expiresOn.isEmpty ? 'no date' : a.expiresOn;
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
           decoration: BoxDecoration(
             color: KsColors.primaryTint,
             borderRadius: BorderRadius.circular(KsRadius.pill),
           ),
-          child: Text(c?.code ?? id,
+          child: Text('${c?.code ?? a.courseTypeId} · $dateLabel',
               style: const TextStyle(color: KsColors.primaryDeep, fontWeight: FontWeight.w700, fontSize: 11)),
         );
       }).toList(),
@@ -298,7 +302,9 @@ class _InviteInstructorSheetState extends ConsumerState<_InviteInstructorSheet> 
   final _phone = TextEditingController();
   final _password = TextEditingController();
   String? _homeLocationId;
-  final Set<String> _quals = {};
+  // Selected courses → optional YYYY-MM-DD expiry. Missing key = not
+  // selected. Empty string value = selected but no date on file yet.
+  final Map<String, String> _accreditations = {};
   bool _saving = false;
   String? _error;
 
@@ -327,7 +333,9 @@ class _InviteInstructorSheetState extends ConsumerState<_InviteInstructorSheet> 
             phone: _phone.text.trim(),
             password: _password.text,
             homeLocationId: _homeLocationId ?? '',
-            qualifiedCourseIds: _quals.toList(),
+            accreditations: _accreditations.entries
+                .map((e) => Accreditation(courseTypeId: e.key, expiresOn: e.value))
+                .toList(),
           );
       ref.invalidate(instructorsProvider);
       if (mounted) Navigator.pop(context);
@@ -404,18 +412,31 @@ class _InviteInstructorSheetState extends ConsumerState<_InviteInstructorSheet> 
                 ],
                 if (courses.isNotEmpty) ...[
                   const SizedBox(height: 14),
-                  Text('Qualified for',
+                  Text('Accredited for',
                       style: GoogleFonts.plusJakartaSans(
                           fontWeight: FontWeight.w700, color: KsColors.ink, fontSize: 13)),
                   const SizedBox(height: 6),
                   Wrap(spacing: 6, runSpacing: 6, children: courses.map((c) {
-                    final on = _quals.contains(c.id);
+                    final on = _accreditations.containsKey(c.id);
                     return _picker(
                       label: c.code,
                       selected: on,
-                      onTap: () => setState(() => on ? _quals.remove(c.id) : _quals.add(c.id)),
+                      onTap: () => setState(() {
+                        if (on) {
+                          _accreditations.remove(c.id);
+                        } else {
+                          _accreditations[c.id] = '';
+                        }
+                      }),
                     );
                   }).toList()),
+                  if (_accreditations.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Set expiry dates after invite from "Edit accreditations".',
+                      style: TextStyle(color: KsColors.ink3, fontSize: 11.5),
+                    ),
+                  ],
                 ],
                 if (_error != null) ...[
                   const SizedBox(height: 12),
@@ -467,9 +488,12 @@ Widget _picker({required String label, required bool selected, required VoidCall
   );
 }
 
-// ---------------- Edit qualifications ----------------
+String _isoDate(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
-Future<void> _showEditQualsSheet(BuildContext context, WidgetRef ref, InstructorRow instructor) async {
+// ---------------- Edit accreditations ----------------
+
+Future<void> _showEditAccreditationsSheet(BuildContext context, WidgetRef ref, InstructorRow instructor) async {
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -477,26 +501,46 @@ Future<void> _showEditQualsSheet(BuildContext context, WidgetRef ref, Instructor
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(KsRadius.xl)),
     ),
-    builder: (_) => _EditQualsSheet(instructor: instructor),
+    builder: (_) => _EditAccreditationsSheet(instructor: instructor),
   );
 }
 
-class _EditQualsSheet extends ConsumerStatefulWidget {
+class _EditAccreditationsSheet extends ConsumerStatefulWidget {
   final InstructorRow instructor;
-  const _EditQualsSheet({required this.instructor});
+  const _EditAccreditationsSheet({required this.instructor});
   @override
-  ConsumerState<_EditQualsSheet> createState() => _EditQualsSheetState();
+  ConsumerState<_EditAccreditationsSheet> createState() => _EditAccreditationsSheetState();
 }
 
-class _EditQualsSheetState extends ConsumerState<_EditQualsSheet> {
-  late Set<String> _quals;
+class _EditAccreditationsSheetState extends ConsumerState<_EditAccreditationsSheet> {
+  // courseTypeId → "YYYY-MM-DD" or "" (selected but no date on file).
+  // Missing key = not accredited.
+  late Map<String, String> _accreditations;
   bool _saving = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _quals = widget.instructor.qualifiedCourseIds.toSet();
+    _accreditations = {
+      for (final a in widget.instructor.accreditations) a.courseTypeId: a.expiresOn,
+    };
+  }
+
+  Future<void> _pickExpiry(String courseTypeId) async {
+    final existing = _accreditations[courseTypeId] ?? '';
+    final initial = DateTime.tryParse(existing) ??
+        DateTime.now().add(const Duration(days: 365));
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(initial.year - 5),
+      lastDate: DateTime(initial.year + 10),
+    );
+    if (picked == null) return;
+    setState(() {
+      _accreditations[courseTypeId] = _isoDate(picked);
+    });
   }
 
   Future<void> _submit() async {
@@ -505,9 +549,11 @@ class _EditQualsSheetState extends ConsumerState<_EditQualsSheet> {
       _error = null;
     });
     try {
-      await ref.read(apiClientProvider).setInstructorQualifications(
+      await ref.read(apiClientProvider).setInstructorAccreditations(
             instructorId: widget.instructor.userId,
-            courseTypeIds: _quals.toList(),
+            accreditations: _accreditations.entries
+                .map((e) => Accreditation(courseTypeId: e.key, expiresOn: e.value))
+                .toList(),
           );
       ref.invalidate(instructorsProvider);
       if (mounted) Navigator.pop(context);
@@ -532,38 +578,75 @@ class _EditQualsSheetState extends ConsumerState<_EditQualsSheet> {
       padding: EdgeInsets.only(bottom: insets.bottom),
       child: SafeArea(
         top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Center(
-                child: Container(
-                  height: 4, width: 36,
-                  margin: const EdgeInsets.only(bottom: 14),
-                  decoration: BoxDecoration(
-                    color: KsColors.border2,
-                    borderRadius: BorderRadius.circular(KsRadius.pill),
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    height: 4, width: 36,
+                    margin: const EdgeInsets.only(bottom: 14),
+                    decoration: BoxDecoration(
+                      color: KsColors.border2,
+                      borderRadius: BorderRadius.circular(KsRadius.pill),
+                    ),
                   ),
                 ),
-              ),
-              Text('Qualifications · ${widget.instructor.name}',
-                  style: GoogleFonts.plusJakartaSans(
-                      fontSize: 18, fontWeight: FontWeight.w800, color: KsColors.ink)),
-              const SizedBox(height: 16),
-              if (courses.isEmpty)
-                const Text('No course types configured yet.',
-                    style: TextStyle(color: KsColors.ink2))
-              else
-                Wrap(spacing: 8, runSpacing: 8, children: courses.map((c) {
-                  final on = _quals.contains(c.id);
-                  return _picker(
-                    label: '${c.code} · ${c.name}',
-                    selected: on,
-                    onTap: () => setState(() => on ? _quals.remove(c.id) : _quals.add(c.id)),
-                  );
-                }).toList()),
+                Text('Accreditations · ${widget.instructor.name}',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 18, fontWeight: FontWeight.w800, color: KsColors.ink)),
+                const SizedBox(height: 16),
+                if (courses.isEmpty)
+                  const Text('No course types configured yet.',
+                      style: TextStyle(color: KsColors.ink2))
+                else
+                  Column(children: courses.map((c) {
+                    final on = _accreditations.containsKey(c.id);
+                    final expiry = _accreditations[c.id] ?? '';
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(children: [
+                        Expanded(
+                          child: _picker(
+                            label: '${c.code} · ${c.name}',
+                            selected: on,
+                            onTap: () => setState(() {
+                              if (on) {
+                                _accreditations.remove(c.id);
+                              } else {
+                                _accreditations[c.id] = '';
+                              }
+                            }),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 150,
+                          child: TextButton.icon(
+                            onPressed: on ? () => _pickExpiry(c.id) : null,
+                            icon: const Icon(Icons.event_outlined, size: 16),
+                            label: Text(expiry.isEmpty ? 'Set expiry' : expiry,
+                                style: const TextStyle(fontSize: 12)),
+                            style: TextButton.styleFrom(
+                              foregroundColor: on ? KsColors.primaryDeep : KsColors.ink4,
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                            ),
+                          ),
+                        ),
+                        if (on && expiry.isNotEmpty)
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            tooltip: 'Clear date',
+                            icon: const Icon(Icons.close, size: 16),
+                            color: KsColors.ink4,
+                            onPressed: () => setState(() => _accreditations[c.id] = ''),
+                          ),
+                      ]),
+                    );
+                  }).toList()),
               if (_error != null) ...[
                 const SizedBox(height: 12),
                 Container(
@@ -583,6 +666,7 @@ class _EditQualsSheetState extends ConsumerState<_EditQualsSheet> {
                     : const Text('Save'),
               ),
             ],
+            ),
           ),
         ),
       ),

@@ -1,0 +1,52 @@
+{
+  "instructors": [
+    {
+      "accountStatus": "active",
+      "email": "aoife@lagan.test",
+      "homeLocationId": "loc_belfast",
+      "homeLocationName": "Belfast",
+      "name": "Aoife McGrath",
+      "phone": "",
+      "qualifiedCourseIds": [
+        "ct_cbt_125",
+        "ct_cbt_650",
+        "ct_prac_mod1",
+        "ct_prac_mod2"
+      ],
+      "userId": "user_instr_aoife"
+    },
+    {
+      "accountStatus": "active",
+      "email": "dave@lagan.test",
+      "homeLocationId": "loc_belfast",
+      "homeLocationName": "Belfast",
+      "name": "Dave Mitchell",
+      "phone": "",
+      "qualifiedCourseIds": [
+        "ct_cbt_125",
+        "ct_cbt_650",
+        "ct_prac_mod1",
+        "ct_prac_mod2",
+        "ct_test_mod1",
+        "ct_test_mod2"
+      ],
+      "userId": "user_instr_dave"
+    },
+    {
+      "accountStatus": "active",
+      "email": "priya@lagan.test",
+      "homeLocationId": "loc_lisburn",
+      "homeLocationName": "Lisburn",
+      "name": "Priya Patel",
+      "phone": "",
+      "qualifiedCourseIds": [
+        "ct_cbt_125",
+        "ct_cbt_650",
+        "ct_prac_mod1",
+        "ct_prac_mod2",
+        "ct_test_mod1"
+      ],
+      "userId": "user_instr_priya"
+    }
+  ]
+}

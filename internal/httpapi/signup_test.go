@@ -19,21 +19,13 @@ func newSignupFixture(t *testing.T, onboardingMode string) *signupFixture {
 	if _, err := f.db.Exec(`UPDATE schools SET onboarding_mode = ? WHERE id = 'school_t'`, onboardingMode); err != nil {
 		t.Fatal(err)
 	}
-	hash, _ := authHashPassword(f.password)
 	if _, err := f.db.Exec(`INSERT INTO users (id, school_id, email, password_hash, name, role, account_status, created_at)
-	                       VALUES ('user_admin','school_t','admin@test',?,'Admin','admin','active',?)`,
-		hash, f.now.Format(time.RFC3339)); err != nil {
+	                       VALUES ('user_admin','school_t','admin@test','','Admin','admin','active',?)`,
+		f.now.Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}
 	sf := &signupFixture{apiFixture: f}
-	resp, body := f.do("POST", "/auth/login",
-		map[string]string{"email": "admin@test", "password": f.password}, "")
-	if resp.StatusCode != 200 {
-		t.Fatalf("admin login: %d body=%s", resp.StatusCode, body)
-	}
-	var out struct{ Token string }
-	json.Unmarshal(body, &out)
-	sf.adminToken = out.Token
+	sf.adminToken = f.mintToken("user_admin")
 	return sf
 }
 
@@ -52,15 +44,14 @@ func TestListSchools_Public(t *testing.T) {
 
 func TestSignup_OpenMode_LandsActive(t *testing.T) {
 	f := newSignupFixture(t, "open")
-	resp, body := f.do("POST", "/auth/signup", map[string]any{
+	resp, body, _ := f.signupViaFirebase(map[string]any{
 		"schoolId":               "school_t",
 		"name":                   "Newbie Norman",
 		"email":                  "newbie@test.com",
 		"phone":                  "+44 7700 900000",
-		"password":               "longenoughpw",
 		"transmissionPreference": "manual",
 		"licenceCategoryPursued": "A2",
-	}, "")
+	})
 	if resp.StatusCode != 201 {
 		t.Fatalf("signup: %d body=%s", resp.StatusCode, body)
 	}
@@ -71,15 +62,14 @@ func TestSignup_OpenMode_LandsActive(t *testing.T) {
 
 func TestSignup_ApprovalMode_LandsPending(t *testing.T) {
 	f := newSignupFixture(t, "approval")
-	resp, body := f.do("POST", "/auth/signup", map[string]any{
+	resp, body, _ := f.signupViaFirebase(map[string]any{
 		"schoolId":               "school_t",
 		"name":                   "Pending Pat",
 		"email":                  "pat@test.com",
 		"phone":                  "+44 7700 900111",
-		"password":               "longenoughpw",
 		"transmissionPreference": "manual",
 		"licenceCategoryPursued": "A1",
-	}, "")
+	})
 	if resp.StatusCode != 201 {
 		t.Fatalf("signup: %d body=%s", resp.StatusCode, body)
 	}
@@ -88,72 +78,33 @@ func TestSignup_ApprovalMode_LandsPending(t *testing.T) {
 	}
 }
 
-func TestSignup_DuplicateEmailRejected(t *testing.T) {
-	f := newSignupFixture(t, "open")
-	body := map[string]any{
-		"schoolId":               "school_t",
-		"name":                   "Dup",
-		"email":                  "dup@test.com",
-		"password":               "longenoughpw",
-		"transmissionPreference": "manual",
-		"licenceCategoryPursued": "A1",
-	}
-	resp, _ := f.do("POST", "/auth/signup", body, "")
-	if resp.StatusCode != 201 {
-		t.Fatalf("first: %d", resp.StatusCode)
-	}
-	resp, b := f.do("POST", "/auth/signup", body, "")
-	if resp.StatusCode != 409 {
-		t.Errorf("expected 409 duplicate, got %d body=%s", resp.StatusCode, b)
-	}
-	if !strings.Contains(string(b), "email_in_use") {
-		t.Errorf("expected email_in_use code, got %s", b)
-	}
-}
-
-func TestSignup_ShortPassword(t *testing.T) {
-	f := newSignupFixture(t, "open")
-	resp, b := f.do("POST", "/auth/signup", map[string]any{
-		"schoolId": "school_t", "name": "X", "email": "x@y.com",
-		"password": "short",
-	}, "")
-	if resp.StatusCode != 400 || !strings.Contains(string(b), "password_too_short") {
-		t.Errorf("expected 400 password_too_short, got %d body=%s", resp.StatusCode, b)
-	}
-}
-
 func TestSignup_InvalidSchool(t *testing.T) {
 	f := newSignupFixture(t, "open")
-	resp, b := f.do("POST", "/auth/signup", map[string]any{
+	resp, b, _ := f.signupViaFirebase(map[string]any{
 		"schoolId": "nope", "name": "X", "email": "x@y.com",
-		"password": "longenoughpw",
-	}, "")
+	})
 	if resp.StatusCode != 404 || !strings.Contains(string(b), "school_not_found") {
 		t.Errorf("expected 404 school_not_found, got %d body=%s", resp.StatusCode, b)
 	}
 }
 
 func TestSignup_PendingUserCannotBookButCanBrowse(t *testing.T) {
-	// End-to-end: signup in approval mode, get token, try to book → 403.
 	f := newSignupFixture(t, "approval")
-	resp, body := f.do("POST", "/auth/signup", map[string]any{
+	resp, body, tok := f.signupViaFirebase(map[string]any{
 		"schoolId": "school_t", "name": "Pending", "email": "p@t.com",
-		"password": "longenoughpw", "transmissionPreference": "manual",
-		"licenceCategoryPursued": "A1",
-	}, "")
+		"transmissionPreference": "manual", "licenceCategoryPursued": "A1",
+	})
 	if resp.StatusCode != 201 {
 		t.Fatalf("signup: %d body=%s", resp.StatusCode, body)
 	}
-	var out struct{ Token string }
-	json.Unmarshal(body, &out)
 
-	// Browse: should succeed (returns sessions)
-	resp, _ = f.do("GET", "/sessions?from=2026-06-06T00:00:00Z&to=2026-07-01T00:00:00Z", nil, out.Token)
+	// Browse: pending users can still see sessions.
+	resp, _ = f.do("GET", "/sessions?from=2026-06-06T00:00:00Z&to=2026-07-01T00:00:00Z", nil, tok)
 	if resp.StatusCode != 200 {
 		t.Errorf("expected pending student CAN browse, got %d", resp.StatusCode)
 	}
-	// Book: should be 403
-	resp, _ = f.do("POST", "/bookings", map[string]string{"sessionId": "sess_t"}, out.Token)
+	// Book: should be 403.
+	resp, _ = f.do("POST", "/bookings", map[string]string{"sessionId": "sess_t"}, tok)
 	if resp.StatusCode != 403 {
 		t.Errorf("expected 403 for pending student book, got %d", resp.StatusCode)
 	}
@@ -161,31 +112,33 @@ func TestSignup_PendingUserCannotBookButCanBrowse(t *testing.T) {
 
 func TestSignups_AdminApprovalQueue(t *testing.T) {
 	f := newSignupFixture(t, "approval")
-	// Sign a student up
-	resp, body := f.do("POST", "/auth/signup", map[string]any{
+	resp, body, _ := f.signupViaFirebase(map[string]any{
 		"schoolId": "school_t", "name": "Pending Pat", "email": "pat@t.com",
-		"password": "longenoughpw", "transmissionPreference": "manual",
-		"licenceCategoryPursued": "A1",
-	}, "")
+		"transmissionPreference": "manual", "licenceCategoryPursued": "A1",
+	})
 	if resp.StatusCode != 201 {
 		t.Fatalf("signup: %d body=%s", resp.StatusCode, body)
 	}
-	var sig struct{ Identity struct{ UserID string `json:"userId"` } }
+	var sig struct {
+		Identity struct {
+			UserID string `json:"userId"`
+		}
+	}
 	json.Unmarshal(body, &sig)
 
-	// Admin lists pending
+	// Admin lists pending.
 	resp, body = f.do("GET", "/signups/pending", nil, f.adminToken)
 	if resp.StatusCode != 200 || !strings.Contains(string(body), "Pending Pat") {
 		t.Errorf("pending list: %d body=%s", resp.StatusCode, body)
 	}
 
-	// Approve
+	// Approve.
 	resp, body = f.do("POST", "/signups/"+sig.Identity.UserID+"/approve", nil, f.adminToken)
 	if resp.StatusCode != 204 {
 		t.Errorf("approve: %d body=%s", resp.StatusCode, body)
 	}
 
-	// Second approve → 409 (already pending=false)
+	// Second approve → 409 (no longer pending).
 	resp, _ = f.do("POST", "/signups/"+sig.Identity.UserID+"/approve", nil, f.adminToken)
 	if resp.StatusCode != 409 {
 		t.Errorf("expected 409 second approve, got %d", resp.StatusCode)
@@ -203,12 +156,18 @@ func TestSignups_StudentCannotReachApprovalEndpoints(t *testing.T) {
 
 func TestSignups_Reject(t *testing.T) {
 	f := newSignupFixture(t, "approval")
-	resp, body := f.do("POST", "/auth/signup", map[string]any{
+	resp, body, tok := f.signupViaFirebase(map[string]any{
 		"schoolId": "school_t", "name": "Reject Me", "email": "rej@t.com",
-		"password": "longenoughpw", "transmissionPreference": "manual",
-		"licenceCategoryPursued": "A1",
-	}, "")
-	var sig struct{ Identity struct{ UserID string `json:"userId"` } }
+		"transmissionPreference": "manual", "licenceCategoryPursued": "A1",
+	})
+	if resp.StatusCode != 201 {
+		t.Fatalf("signup: %d body=%s", resp.StatusCode, body)
+	}
+	var sig struct {
+		Identity struct {
+			UserID string `json:"userId"`
+		}
+	}
 	json.Unmarshal(body, &sig)
 
 	resp, _ = f.do("POST", "/signups/"+sig.Identity.UserID+"/reject", nil, f.adminToken)
@@ -216,9 +175,15 @@ func TestSignups_Reject(t *testing.T) {
 		t.Errorf("reject: %d", resp.StatusCode)
 	}
 
-	// User can't log in any more
-	resp, b := f.do("POST", "/auth/login", map[string]string{"email": "rej@t.com", "password": "longenoughpw"}, "")
-	if resp.StatusCode != 403 || !strings.Contains(string(b), "account_disabled") {
-		t.Errorf("expected 403 account_disabled after reject, got %d body=%s", resp.StatusCode, b)
+	// Rejected user's token still verifies at Firebase (we don't revoke
+	// refresh tokens — see "1-hour revocation window" note in the auth
+	// architecture). But the middleware's LoadByFirebaseUID returns
+	// ErrAccountDisabled because account_status flipped to 'disabled'.
+	resp, body = f.do("GET", "/me", nil, tok)
+	if resp.StatusCode != 403 {
+		t.Errorf("expected 403 after reject, got %d body=%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "account_disabled") {
+		t.Errorf("expected account_disabled code, got %s", body)
 	}
 }

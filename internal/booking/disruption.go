@@ -56,11 +56,28 @@ type AffectedBooking struct {
 }
 
 type SwapCandidate struct {
-	BikeID            domain.BikeID
-	BikeNickname      string
-	BikeRegistration  string
-	CurrentLocationID domain.LocationID
-	IsCrossSite       bool
+	BikeID              domain.BikeID
+	BikeNickname        string
+	BikeRegistration    string
+	CurrentLocationID   domain.LocationID
+	CurrentLocationName string
+	IsCrossSite         bool
+	// TravelMinutes is the school's configured travel time from the
+	// bike's current location to the session's location. Populated
+	// only when the swap is cross-site; 0 when same-site or when the
+	// matrix doesn't have an entry for the pair (e.g. partially
+	// configured schools). UI uses it to render "Lisburn → Belfast:
+	// 25 min drive" alongside the same-day warning.
+	TravelMinutes int
+	// TightFromPrior fires when the bike's most recent prior booking
+	// ends so close to this session that physically moving the bike
+	// in time is doubtful. Computed as
+	// `prior.ends_at + travel_minutes + travel_buffer > target.starts_at`.
+	// Non-blocking — the engine surfaces the candidate either way,
+	// the UI shows a warning so the manager makes the call.
+	TightFromPrior        bool
+	PriorSessionEndsAt    time.Time
+	PriorSessionLocation  string // human-readable name
 }
 
 var (
@@ -303,6 +320,14 @@ type ResolutionKind string
 const (
 	ResolveSwap               ResolutionKind = "swapped"
 	ResolveCancelWithApproval ResolutionKind = "cancel_with_approval"
+	// ResolveDismissed is post-session cleanup. The session has come
+	// and gone; we close the disruption row without voiding the
+	// charge (the student may well have attended on a workaround
+	// bike) and without firing a "your booking was cancelled"
+	// notification (it'd land too late to be useful). Distinct from
+	// cancel_with_approval, which is the real-time decision the
+	// school makes when it can't deliver the future session.
+	ResolveDismissed ResolutionKind = "dismissed"
 )
 
 type ResolveAffectedBookingRequest struct {
@@ -348,9 +373,30 @@ func resolveInTx(ctx context.Context, tx *tenant.Scope, req ResolveAffectedBooki
 		return applySwapInTx(ctx, tx, req, now)
 	case ResolveCancelWithApproval:
 		return applyCancelWithApprovalInTx(ctx, tx, req, now)
+	case ResolveDismissed:
+		return applyDismissInTx(ctx, tx, req, now)
 	default:
 		return fmt.Errorf("disruption: unknown resolution %q", req.Resolution)
 	}
+}
+
+// applyDismissInTx is the post-session cleanup path. Only the disruption
+// link is touched — the booking row's status and any auto-charge stay
+// put because the session already ran (or didn't) and we have no good
+// information to overwrite reality with. No notify hook fires either
+// because a "your booking was cancelled" message landing after the
+// session would confuse more than help.
+func applyDismissInTx(ctx context.Context, tx *tenant.Scope, req ResolveAffectedBookingRequest, now time.Time) error {
+	if _, err := tx.Conn().ExecContext(ctx, `
+		UPDATE disruption_affected_bookings
+		   SET resolution = 'dismissed',
+		       resolved_at = ?
+		 WHERE disruption_id = ? AND booking_id = ? AND school_id = ?
+	`, now.UTC().Format(time.RFC3339),
+		string(req.DisruptionID), string(req.BookingID), string(tx.SchoolID())); err != nil {
+		return fmt.Errorf("update disruption link (dismiss): %w", err)
+	}
+	return nil
 }
 
 // loadAffectedBookingForNotify returns the minimal Booking shape needed by
@@ -468,6 +514,14 @@ func applyCancelWithApprovalInTx(ctx context.Context, tx *tenant.Scope, req Reso
 		string(req.BookingID), string(tx.SchoolID())); err != nil {
 		return fmt.Errorf("cancel-with-approval booking: %w", err)
 	}
+	// Void any auto-charge tied to this booking, in the same tx as the
+	// cancel. Mirrors the regular cancelInTx path (cancel.go:161) so
+	// students who paid for a session the school is cancelling end up
+	// with a credit on the ledger, not a stale charge that makes them
+	// look like they still owe for a session that doesn't exist.
+	if err := voidAutoCharge(ctx, tx, req.BookingID, req.ApprovedBy, now); err != nil {
+		return err
+	}
 	if _, err := tx.Conn().ExecContext(ctx, `
 		UPDATE disruption_affected_bookings
 		   SET resolution = 'cancel_with_approval',
@@ -486,4 +540,77 @@ func applyCancelWithApprovalInTx(ctx context.Context, tx *tenant.Scope, req Reso
 		_ = notify.OnDisruptionResolved(ctx, tx, b, req.DisruptionID, "cancel_with_approval")
 	}
 	return nil
+}
+
+// DismissPastPendingDisruptions sweeps every still-`pending`
+// disruption_affected_bookings link whose session has already ended
+// and applies cancel-with-approval. Used by the admin's "Dismiss past"
+// cleanup — managers shouldn't have to click through five-by-five
+// when last week's broken-clutch disruption was never tidied up.
+//
+// Each row is processed inside the existing per-row tx machinery so
+// the notify hooks fire the same way they would on a manual cancel.
+// Returns the count of rows handled.
+type DismissPastResult struct {
+	Cancelled int
+}
+
+func DismissPastPendingDisruptions(ctx context.Context, scope *tenant.Scope, requestedBy domain.UserID) (DismissPastResult, error) {
+	return dismissPastAt(ctx, scope, requestedBy, time.Now)
+}
+
+func dismissPastAt(ctx context.Context, scope *tenant.Scope, requestedBy domain.UserID, nowFn func() time.Time) (DismissPastResult, error) {
+	now := nowFn()
+	// Find every pending row whose session has already ended. Single
+	// query, then walk the rows applying the existing resolve path
+	// for each. Per-row tx (via ResolveAffectedBooking) means a
+	// partial run still saves what it could.
+	rows, err := scope.Conn().QueryContext(ctx, `
+		SELECT dab.disruption_id, dab.booking_id
+		FROM disruption_affected_bookings dab
+		JOIN bookings b ON b.id = dab.booking_id AND b.school_id = dab.school_id
+		JOIN sessions s ON s.id = b.session_id   AND s.school_id = b.school_id
+		WHERE dab.school_id = ?
+		  AND dab.resolution = 'pending'
+		  AND s.ends_at < ?
+	`, string(scope.SchoolID()), now.UTC().Format(time.RFC3339))
+	if err != nil {
+		return DismissPastResult{}, fmt.Errorf("find stale disruptions: %w", err)
+	}
+	defer rows.Close()
+	type pair struct {
+		disruption domain.DisruptionID
+		booking    domain.BookingID
+	}
+	var stale []pair
+	for rows.Next() {
+		var d, b string
+		if err := rows.Scan(&d, &b); err != nil {
+			return DismissPastResult{}, err
+		}
+		stale = append(stale, pair{
+			disruption: domain.DisruptionID(d),
+			booking:    domain.BookingID(b),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return DismissPastResult{}, err
+	}
+	out := DismissPastResult{}
+	for _, s := range stale {
+		err := ResolveAffectedBooking(ctx, scope, ResolveAffectedBookingRequest{
+			DisruptionID: s.disruption,
+			BookingID:    s.booking,
+			Resolution:   ResolveDismissed,
+			ApprovedBy:   requestedBy,
+			Notes:        "Session passed without resolution — bulk dismiss.",
+		})
+		if err == nil {
+			out.Cancelled++
+		}
+		// Swallow per-row errors (most likely ErrAlreadyResolved if
+		// someone resolved a row between our SELECT and the apply).
+		// Returning early would punish the rest of the batch.
+	}
+	return out, nil
 }

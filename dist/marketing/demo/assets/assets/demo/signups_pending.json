@@ -1,0 +1,37 @@
+{
+  "applicants": [
+    {
+      "dateOfBirth": "",
+      "email": "rowan@test",
+      "licenceCategoryPursued": "A2",
+      "name": "Rowan Doyle",
+      "phone": "07700 900 215",
+      "signedUpAt": "2026-06-08T22:36:04Z",
+      "signupNote": "",
+      "transmissionPreference": "manual",
+      "userId": "user_student_rowan"
+    },
+    {
+      "dateOfBirth": "",
+      "email": "sophie@test",
+      "licenceCategoryPursued": "A2",
+      "name": "Sophie Hart",
+      "phone": "07700 900 245",
+      "signedUpAt": "2026-06-08T22:36:04Z",
+      "signupNote": "Wants CBT asap — turns 17 next week.",
+      "transmissionPreference": "manual",
+      "userId": "user_student_sophie"
+    },
+    {
+      "dateOfBirth": "",
+      "email": "conor@test",
+      "licenceCategoryPursued": "A2",
+      "name": "Conor Magee",
+      "phone": "07700 900 267",
+      "signedUpAt": "2026-06-08T22:36:04Z",
+      "signupNote": "Returning rider, full car licence. Last on a bike ~10 years ago.",
+      "transmissionPreference": "manual",
+      "userId": "user_student_conor"
+    }
+  ]
+}

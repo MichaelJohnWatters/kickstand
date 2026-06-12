@@ -18,6 +18,15 @@ import '../screens/admin_logistics_screen.dart';
 import '../screens/admin_master_calendar_screen.dart';
 import '../screens/admin_overview_screen.dart';
 import '../screens/admin_reimbursements_screen.dart';
+import '../screens/admin_bike_detail_screen.dart';
+import '../screens/admin_audit_screen.dart';
+import '../screens/admin_closures_screen.dart';
+import '../screens/admin_incidents_screen.dart';
+import '../screens/admin_compliance_screen.dart';
+import '../screens/admin_finance_screen.dart';
+import '../screens/admin_templates_screen.dart';
+import '../screens/admin_settings_screen.dart';
+import '../screens/demo_role_picker_screen.dart';
 import '../screens/admin_shell.dart';
 import '../screens/admin_signups_screen.dart';
 import '../screens/admin_student_detail_screen.dart';
@@ -33,6 +42,7 @@ import '../screens/instructor_session_detail_screen.dart';
 import '../screens/instructor_shell.dart';
 import '../screens/licence_screen.dart';
 import '../screens/login_screen.dart';
+import '../screens/signup_screen.dart';
 import '../screens/my_bookings_screen.dart';
 import '../screens/notifications_screen.dart';
 import '../screens/progress_screen.dart';
@@ -41,6 +51,7 @@ import '../screens/student_home_screen.dart';
 import '../screens/student_shell.dart';
 import '../screens/welcome_screen.dart';
 import '../state/auth.dart';
+import '../state/demo_mode.dart';
 import '../state/providers.dart';
 
 String _homeForRole(String role) {
@@ -59,6 +70,51 @@ bool _isStaff(String role) => role == 'admin' || role == 'owner';
 bool _isStudent(String role) => role == 'student';
 bool _isInstructor(String role) => role == 'instructor';
 
+/// Pure-function form of the redirect policy — separated from the
+/// GoRouter wiring so it can be unit-tested directly (see
+/// test/router_redirect_test.dart).
+///
+/// Returns the location the user should be sent to, or null to allow
+/// the requested route. The contract:
+///
+///   - Loading auth state: bounce everywhere except /splash to /splash.
+///   - Signed out: only the auth pages (/welcome /login /signup) are
+///     reachable; everything else lands at /welcome.
+///   - Signed in: auth pages redirect to the role home.
+///   - Signed in but trying to enter another role's section
+///     (/student → /admin, etc.): bounce back to the role home.
+///
+/// The Go API enforces all of this server-side too (see
+/// auth_coverage_test.go). The router redirect is UX polish, not the
+/// security boundary.
+String? decideRedirect({
+  required bool authLoading,
+  required bool authSignedIn,
+  required String? identityRole,
+  required String location,
+}) {
+  if (authLoading) {
+    return location == '/splash' ? null : '/splash';
+  }
+  final isAuthPath = location == '/welcome' ||
+      location == '/login' ||
+      location == '/signup' ||
+      location == '/splash';
+  if (!authSignedIn) {
+    return isAuthPath && location != '/splash' ? null : '/welcome';
+  }
+  final role = identityRole ?? 'student';
+  final home = _homeForRole(role);
+  if (isAuthPath) return home;
+  final onStudent = location.startsWith('/student');
+  final onInstructor = location.startsWith('/instructor');
+  final onAdmin = location.startsWith('/admin');
+  if (_isStudent(role) && !onStudent && (onInstructor || onAdmin)) return home;
+  if (_isInstructor(role) && !onInstructor && (onStudent || onAdmin)) return home;
+  if (_isStaff(role) && !onAdmin && (onStudent || onInstructor)) return home;
+  return null;
+}
+
 GoRouter buildRouter(Ref ref) {
   final refresh = _RiverpodAuthRefresh(ref);
 
@@ -67,32 +123,22 @@ GoRouter buildRouter(Ref ref) {
     refreshListenable: refresh,
     redirect: (ctx, state) {
       final auth = ref.read(authControllerProvider);
-      if (auth.loading) {
-        return state.matchedLocation == '/splash' ? null : '/splash';
-      }
-      final isAuthPath = state.matchedLocation == '/welcome' ||
-          state.matchedLocation == '/login' ||
-          state.matchedLocation == '/splash';
-      if (!auth.isSignedIn) {
-        return isAuthPath && state.matchedLocation != '/splash' ? null : '/welcome';
-      }
-      final home = _homeForRole(auth.identity!.role);
-      if (isAuthPath) return home;
-
-      // Bounce a user trying to hit another role's section to their own home.
-      final role = auth.identity!.role;
-      final onStudent = state.matchedLocation.startsWith('/student');
-      final onInstructor = state.matchedLocation.startsWith('/instructor');
-      final onAdmin = state.matchedLocation.startsWith('/admin');
-      if (_isStudent(role) && !onStudent && (onInstructor || onAdmin)) return home;
-      if (_isInstructor(role) && !onInstructor && (onStudent || onAdmin)) return home;
-      if (_isStaff(role) && !onAdmin && (onStudent || onInstructor)) return home;
-      return null;
+      return decideRedirect(
+        authLoading: auth.loading,
+        authSignedIn: auth.isSignedIn,
+        identityRole: auth.identity?.role,
+        location: state.matchedLocation,
+      );
     },
     routes: [
       GoRoute(path: '/splash', builder: (_, __) => const SplashScreen()),
-      GoRoute(path: '/welcome', builder: (_, __) => const WelcomeScreen()),
+      GoRoute(
+          path: '/welcome',
+          builder: (_, __) => kDemoMode
+              ? const DemoRolePickerScreen()
+              : const WelcomeScreen()),
       GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
+      GoRoute(path: '/signup', builder: (_, __) => const SignupScreen()),
 
       // Shared between roles.
       GoRoute(path: '/notifications', builder: (_, __) => const NotificationsScreen()),
@@ -153,6 +199,12 @@ GoRouter buildRouter(Ref ref) {
             pageBuilder: (ctx, st) => _instant(AdminStudentDetailScreen(studentId: st.pathParameters['id']!)),
           ),
           GoRoute(path: '/admin/fleet', pageBuilder: (_, __) => _instant(const AdminFleetScreen())),
+          GoRoute(
+            path: '/admin/fleet/:bikeId',
+            pageBuilder: (ctx, st) => _instant(
+              AdminBikeDetailScreen(bikeId: st.pathParameters['bikeId']!),
+            ),
+          ),
           GoRoute(path: '/admin/disruptions', pageBuilder: (_, __) => _instant(const AdminDisruptionsScreen())),
           GoRoute(path: '/admin/logistics', pageBuilder: (_, __) => _instant(const AdminLogisticsScreen())),
           GoRoute(path: '/admin/instructors', pageBuilder: (_, __) => _instant(const AdminInstructorsScreen())),
@@ -161,6 +213,13 @@ GoRouter buildRouter(Ref ref) {
           GoRoute(path: '/admin/locations', pageBuilder: (_, __) => _instant(const AdminLocationsScreen())),
           GoRoute(path: '/admin/courses', pageBuilder: (_, __) => _instant(const AdminCourseTypesScreen())),
           GoRoute(path: '/admin/calendar', pageBuilder: (_, __) => _instant(const AdminMasterCalendarScreen())),
+          GoRoute(path: '/admin/audit', pageBuilder: (_, __) => _instant(const AdminAuditScreen())),
+          GoRoute(path: '/admin/compliance', pageBuilder: (_, __) => _instant(const AdminComplianceScreen())),
+          GoRoute(path: '/admin/finance', pageBuilder: (_, __) => _instant(const AdminFinanceScreen())),
+          GoRoute(path: '/admin/templates', pageBuilder: (_, __) => _instant(const AdminTemplatesScreen())),
+          GoRoute(path: '/admin/closures', pageBuilder: (_, __) => _instant(const AdminClosuresScreen())),
+          GoRoute(path: '/admin/incidents', pageBuilder: (_, __) => _instant(const AdminIncidentsScreen())),
+          GoRoute(path: '/admin/settings', pageBuilder: (_, __) => _instant(const AdminSettingsScreen())),
         ],
       ),
     ],

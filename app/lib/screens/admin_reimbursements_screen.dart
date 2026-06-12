@@ -7,6 +7,8 @@
 //   - "Manage types" button in the header → categories editor modal
 //   - Row click → full expense detail modal with timeline + actions
 
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -15,6 +17,7 @@ import 'package:intl/intl.dart';
 import '../api/models.dart';
 import '../state/providers.dart';
 import '../theme/tokens.dart';
+import '../widgets/empty_state.dart';
 
 class AdminReimbursementsScreen extends ConsumerStatefulWidget {
   const AdminReimbursementsScreen({super.key});
@@ -68,7 +71,7 @@ class _AdminReimbursementsScreenState
               padding: EdgeInsets.symmetric(vertical: 32),
               child: Center(child: CircularProgressIndicator(color: KsColors.primary)),
             ),
-            error: (e, _) => Text('Couldn’t load.\n$e'),
+            error: (e, _) => KsEmptyState.error(message: e.toString()),
             data: (payload) => _Body(
               payload: payload,
               tab: _tab,
@@ -127,12 +130,18 @@ class _AdminReimbursementsScreenState
       submitLabel: 'Approve',
     );
     if (note == null) return;
+    // The dialog dismissal + provider invalidate together rebuild the
+    // Scaffold's inherited widgets. Capture the messenger now so the
+    // post-hop toast doesn't trip an "ancestor lookup on a deactivated
+    // widget" assertion.
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
     try {
       await ref.read(apiClientProvider).approveExpense(e.id, reviewerNote: note);
       ref.invalidate(expensesForReviewProvider);
-      if (mounted) _toast('Approved £${(e.amountPence / 100).toStringAsFixed(2)}');
+      _showSnack(messenger, 'Approved £${(e.amountPence / 100).toStringAsFixed(2)}');
     } catch (err) {
-      if (mounted) _toast('Could not approve: $err', error: true);
+      _showSnack(messenger, 'Could not approve: $err', error: true);
     }
   }
 
@@ -145,23 +154,37 @@ class _AdminReimbursementsScreenState
       submitLabel: 'Reject',
     );
     if (note == null || note.isEmpty) return;
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
     try {
       await ref.read(apiClientProvider).rejectExpense(e.id, reviewerNote: note);
       ref.invalidate(expensesForReviewProvider);
-      if (mounted) _toast('Rejected · instructor notified');
+      _showSnack(messenger, 'Rejected · instructor notified');
     } catch (err) {
-      if (mounted) _toast('Could not reject: $err', error: true);
+      _showSnack(messenger, 'Could not reject: $err', error: true);
     }
   }
 
   Future<void> _reimburse(Expense e) async {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
     try {
       await ref.read(apiClientProvider).reimburseExpense(e.id);
       ref.invalidate(expensesForReviewProvider);
-      if (mounted) _toast('Marked £${(e.amountPence / 100).toStringAsFixed(2)} as reimbursed');
+      _showSnack(messenger,
+          'Marked £${(e.amountPence / 100).toStringAsFixed(2)} as reimbursed');
     } catch (err) {
-      if (mounted) _toast('Could not mark reimbursed: $err', error: true);
+      _showSnack(messenger, 'Could not mark reimbursed: $err', error: true);
     }
+  }
+
+  void _showSnack(ScaffoldMessengerState? m, String message,
+      {bool error = false}) {
+    m?.showSnackBar(SnackBar(
+      content: Text(message),
+      backgroundColor: error ? KsColors.danger : KsColors.ink,
+      behavior: SnackBarBehavior.floating,
+    ));
   }
 
   Future<String?> _promptForNote({
@@ -211,13 +234,6 @@ class _AdminReimbursementsScreenState
     );
   }
 
-  void _toast(String message, {bool error = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(message),
-      backgroundColor: error ? KsColors.danger : KsColors.ink,
-      behavior: SnackBarBehavior.floating,
-    ));
-  }
 }
 
 class _Body extends StatelessWidget {
@@ -547,14 +563,19 @@ class _TableRow extends StatelessWidget {
               ),
             ]),
           ),
-          // Receipt thumbnail — striped placeholder + ticket glyph, click
-          // opens the full detail modal (row click does the same; this gives
-          // the manager an explicit visual cue per the design).
+          // Receipt thumbnail — real 50×50 thumb decoded from the list
+          // payload; striped placeholder for older rows without one.
+          // Click opens the full detail modal (the row click does the
+          // same; this gives the manager an explicit visual cue per
+          // the design).
           SizedBox(
             width: 60,
             child: Align(
               alignment: Alignment.centerLeft,
-              child: _ReceiptThumbButton(onTap: onOpen),
+              child: _ReceiptThumbButton(
+                onTap: onOpen,
+                thumbBytes: e.receiptThumbBytes,
+              ),
             ),
           ),
           // Category
@@ -679,11 +700,14 @@ class _ActionsCell extends StatelessWidget {
   }
 }
 
-/// Diagonal-striped 44×44 placeholder + ticket glyph. Clicking opens the
-/// full expense detail modal (where the real receipt is loaded).
+/// 44×44 thumbnail button. Renders the inline 50×50 thumb from the
+/// list payload when available; otherwise falls back to the diagonal-
+/// striped placeholder + ticket glyph. Click opens the full detail
+/// modal (where the cached full-size receipt is fetched).
 class _ReceiptThumbButton extends StatelessWidget {
   final VoidCallback onTap;
-  const _ReceiptThumbButton({required this.onTap});
+  final Uint8List thumbBytes;
+  const _ReceiptThumbButton({required this.onTap, required this.thumbBytes});
   @override
   Widget build(BuildContext context) {
     return InkWell(
@@ -699,13 +723,21 @@ class _ReceiptThumbButton extends StatelessWidget {
             border: Border.all(color: KsColors.border),
           ),
           clipBehavior: Clip.antiAlias,
-          child: Stack(children: [
-            // Repeating diagonal stripes — same trick as the design's CSS.
-            CustomPaint(size: const Size(44, 44), painter: const _StripePainter()),
-            const Center(
-              child: Icon(Icons.receipt_long, size: 16, color: KsColors.ink4),
-            ),
-          ]),
+          child: thumbBytes.isNotEmpty
+              ? Image.memory(
+                  thumbBytes,
+                  width: 44,
+                  height: 44,
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                )
+              : Stack(children: [
+                  // Repeating diagonal stripes — same trick as the design's CSS.
+                  CustomPaint(size: const Size(44, 44), painter: const _StripePainter()),
+                  const Center(
+                    child: Icon(Icons.receipt_long, size: 16, color: KsColors.ink4),
+                  ),
+                ]),
         ),
       ),
     );

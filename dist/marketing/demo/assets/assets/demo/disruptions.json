@@ -1,0 +1,67 @@
+{
+  "disruptions": [
+    {
+      "affectedBookings": [
+        {
+          "bookingId": "bk_alex_disrupted",
+          "courseName": "CBT 125",
+          "locationId": "loc_belfast",
+          "locationName": "Belfast",
+          "resolution": "pending",
+          "sessionEndsAt": "2026-06-09T13:00:00Z",
+          "sessionId": "sess_cbt_belfast",
+          "sessionStartsAt": "2026-06-09T09:00:00Z",
+          "studentId": "user_student_alex",
+          "studentName": "Alex Hughes",
+          "swapCandidates": [
+            {
+              "bikeId": "bike_a1_manual_1",
+              "bikeNickname": "Honda CB125F",
+              "bikeRegistration": "GKZ 4471",
+              "currentLocationId": "loc_belfast",
+              "isCrossSite": false
+            }
+          ]
+        },
+        {
+          "bookingId": "bk_niamh_disrupted",
+          "courseName": "CBT 125",
+          "locationId": "loc_belfast",
+          "locationName": "Belfast",
+          "newBikeId": "bike_a1_manual_1",
+          "newBikeNickname": "Honda CB125F",
+          "resolution": "swapped",
+          "resolvedAt": "2026-06-08T22:21:04Z",
+          "sessionEndsAt": "2026-06-09T18:00:00Z",
+          "sessionId": "sess_cbt_belfast_pm",
+          "sessionStartsAt": "2026-06-09T14:00:00Z",
+          "studentId": "user_student_niamh",
+          "studentName": "Niamh Quinn",
+          "swapCandidates": []
+        },
+        {
+          "bookingId": "bk_ryan_disrupted",
+          "courseName": "CBT 125",
+          "locationId": "loc_belfast",
+          "locationName": "Belfast",
+          "resolution": "pending",
+          "sessionEndsAt": "2026-06-09T18:00:00Z",
+          "sessionId": "sess_cbt_belfast_pm",
+          "sessionStartsAt": "2026-06-09T14:00:00Z",
+          "studentId": "user_student_ryan",
+          "studentName": "Ryan Carson",
+          "swapCandidates": []
+        }
+      ],
+      "bikeId": "bike_a1_manual_2",
+      "bikeNickname": "Yamaha YBR125",
+      "bikeRegistration": "RKZ 8810",
+      "disruptionId": "disr_a1m2",
+      "locationId": "loc_belfast",
+      "locationName": "Belfast",
+      "reason": "Clutch slipping — awaiting parts",
+      "reportedByName": "Owen O'Neill",
+      "startedAt": "2026-06-08T22:36:04Z"
+    }
+  ]
+}

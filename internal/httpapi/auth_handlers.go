@@ -1,25 +1,14 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"net/http"
-	"time"
 
 	"github.com/michaeljohnwatters/kickstand/internal/auth"
-	"github.com/michaeljohnwatters/kickstand/internal/domain"
 )
 
-type loginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-type loginResponse struct {
-	Token     string       `json:"token"`
-	ExpiresAt time.Time    `json:"expiresAt"`
-	Identity  identityView `json:"identity"`
-}
-
+// identityView is the wire shape of an authenticated identity. Both /me
+// and the signup endpoints emit this. Kept as a plain JSON struct so
+// the response is stable across the legacy + Firebase paths.
 type identityView struct {
 	UserID        string `json:"userId"`
 	SchoolID      string `json:"schoolId"`
@@ -38,40 +27,6 @@ func toIdentityView(id auth.Identity) identityView {
 		Email:         id.Email,
 		Name:          id.Name,
 	}
-}
-
-func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	var req loginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_json", "request body must be valid JSON")
-		return
-	}
-	if req.Email == "" || req.Password == "" {
-		writeError(w, http.StatusBadRequest, "missing_field", "email and password are required")
-		return
-	}
-	res, err := auth.Login(r.Context(), s.DB, auth.LoginRequest{
-		Email:    req.Email,
-		Password: req.Password,
-	})
-	if err != nil {
-		writeEngineError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, loginResponse{
-		Token:     string(res.Token),
-		ExpiresAt: res.ExpiresAt,
-		Identity:  toIdentityView(res.Identity),
-	})
-}
-
-func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	tok, _ := bearerToken(r) // middleware already accepted it
-	if err := auth.Logout(r.Context(), s.DB, domain.UserSessionToken(tok)); err != nil {
-		writeEngineError(w, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {

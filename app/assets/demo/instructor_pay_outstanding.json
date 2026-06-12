@@ -1,0 +1,26 @@
+{
+  "instructors": [
+    {
+      "instructorId": "user_instr_aoife",
+      "instructorName": "Aoife McGrath",
+      "outstandingPence": 0,
+      "totalEarnedPence": 0,
+      "totalPaidPence": 0
+    },
+    {
+      "instructorId": "user_instr_dave",
+      "instructorName": "Dave Mitchell",
+      "outstandingPence": 2500,
+      "totalEarnedPence": 6500,
+      "totalPaidPence": 4000
+    },
+    {
+      "instructorId": "user_instr_priya",
+      "instructorName": "Priya Patel",
+      "outstandingPence": 0,
+      "totalEarnedPence": 4000,
+      "totalPaidPence": 4000
+    }
+  ],
+  "totalOwedPence": 2500
+}

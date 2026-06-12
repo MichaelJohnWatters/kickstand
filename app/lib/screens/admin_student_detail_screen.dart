@@ -16,6 +16,7 @@ import '../api/models.dart';
 import '../state/providers.dart';
 import '../theme/tokens.dart';
 import '../widgets/record_payment_sheet.dart';
+import '../widgets/empty_state.dart';
 
 final _studentDetailProvider = FutureProvider.autoDispose
     .family<Map<String, dynamic>, String>((ref, id) async {
@@ -37,7 +38,7 @@ class AdminStudentDetailScreen extends ConsumerWidget {
           padding: EdgeInsets.symmetric(vertical: 32),
           child: CircularProgressIndicator(color: KsColors.primary),
         )),
-        error: (e, _) => ListView(children: [Padding(padding: const EdgeInsets.all(24), child: Text('Couldn’t load.\n$e'))]),
+        error: (e, _) => ListView(children: [Padding(padding: const EdgeInsets.all(24), child: KsEmptyState.error(message: e.toString()))]),
         data: (d) {
           final basics = (d['basics'] as Map?)?.cast<String, dynamic>() ?? const {};
           final financial = (d['financial'] as Map?)?.cast<String, dynamic>() ?? const {};
@@ -599,43 +600,210 @@ class _IncidentsCard extends StatelessWidget {
               children: incidents.map((i) {
                 final at = DateTime.tryParse(i['occurredAt'] ?? '')?.toLocal();
                 final tookOffline = i['tookBikeOffline'] ?? false;
+                final incidentId = (i['id'] ?? '') as String;
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Icon(Icons.error_outline, color: KsColors.danger, size: 16),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(i['description'] ?? '',
-                                style: const TextStyle(color: KsColors.ink, fontSize: 13)),
-                            const SizedBox(height: 2),
-                            Wrap(spacing: 8, children: [
-                              if (at != null)
-                                Text(DateFormat('d MMM yyyy').format(at),
-                                    style: const TextStyle(color: KsColors.ink3, fontSize: 11)),
-                              if (tookOffline)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: KsColors.warningTint,
-                                    borderRadius: BorderRadius.circular(KsRadius.pill),
-                                  ),
-                                  child: const Text('Took bike offline',
-                                      style: TextStyle(color: KsColors.warning, fontSize: 10, fontWeight: FontWeight.w700)),
-                                ),
-                            ]),
+                            const Icon(Icons.error_outline,
+                                color: KsColors.danger, size: 16),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(i['description'] ?? '',
+                                      style: const TextStyle(
+                                          color: KsColors.ink, fontSize: 13)),
+                                  const SizedBox(height: 2),
+                                  Wrap(spacing: 8, children: [
+                                    if (at != null)
+                                      Text(DateFormat('d MMM yyyy').format(at),
+                                          style: const TextStyle(
+                                              color: KsColors.ink3,
+                                              fontSize: 11)),
+                                    if (tookOffline)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: KsColors.warningTint,
+                                          borderRadius:
+                                              BorderRadius.circular(KsRadius.pill),
+                                        ),
+                                        child: const Text('Took bike offline',
+                                            style: TextStyle(
+                                                color: KsColors.warning,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.w700)),
+                                      ),
+                                  ]),
+                                ],
+                              ),
+                            ),
                           ],
                         ),
-                      ),
-                    ],
-                  ),
+                        if (incidentId.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 24, top: 8),
+                            child: _FollowupsBlock(incidentId: incidentId),
+                          ),
+                      ]),
                 );
               }).toList(),
             ),
+    );
+  }
+}
+
+// ---------------- Incident follow-ups ----------------
+
+final _followupsProvider = FutureProvider.autoDispose
+    .family<List<Map<String, dynamic>>, String>((ref, incidentId) async {
+  return ref.read(apiClientProvider).listIncidentFollowups(incidentId);
+});
+
+class _FollowupsBlock extends ConsumerWidget {
+  final String incidentId;
+  const _FollowupsBlock({required this.incidentId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(_followupsProvider(incidentId));
+    return async.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (rows) {
+        if (rows.isEmpty) return const SizedBox.shrink();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('FOLLOW-UPS',
+                style: GoogleFonts.plusJakartaSans(
+                    color: KsColors.ink3,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5)),
+            const SizedBox(height: 4),
+            for (final r in rows)
+              _FollowupRow(incidentId: incidentId, row: r),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _FollowupRow extends ConsumerStatefulWidget {
+  final String incidentId;
+  final Map<String, dynamic> row;
+  const _FollowupRow({required this.incidentId, required this.row});
+  @override
+  ConsumerState<_FollowupRow> createState() => _FollowupRowState();
+}
+
+class _FollowupRowState extends ConsumerState<_FollowupRow> {
+  bool _busy = false;
+
+  Future<void> _toggle() async {
+    final id = (widget.row['id'] ?? '') as String;
+    final done = (widget.row['done'] ?? false) as bool;
+    setState(() => _busy = true);
+    try {
+      if (done) {
+        await ref.read(apiClientProvider).reopenFollowup(id);
+      } else {
+        await ref.read(apiClientProvider).completeFollowup(followupId: id);
+      }
+      ref.invalidate(_followupsProvider(widget.incidentId));
+      ref.invalidate(openFollowupsProvider);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Could not update: $e'),
+          backgroundColor: KsColors.danger,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final r = widget.row;
+    final done = (r['done'] ?? false) as bool;
+    final kind = (r['kind'] ?? '') as String;
+    final description = (r['description'] ?? '') as String;
+    final dueOn = (r['dueOn'] ?? '') as String;
+    final today = DateTime.now();
+    final dueParsed = DateTime.tryParse(dueOn);
+    final overdue = !done &&
+        dueParsed != null &&
+        dueParsed.isBefore(DateTime(today.year, today.month, today.day));
+    final kindLabel = switch (kind) {
+      'mechanical_check' => 'Mechanical check',
+      'student_welfare' => 'Welfare call',
+      'insurance_notify' => 'Insurance notify',
+      _ => 'Follow-up',
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _busy
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2))
+            : InkWell(
+                onTap: _toggle,
+                child: Icon(
+                  done
+                      ? Icons.check_box_rounded
+                      : Icons.check_box_outline_blank_rounded,
+                  color: done ? KsColors.success : KsColors.ink3,
+                  size: 18,
+                ),
+              ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(kindLabel,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12.5,
+                        decoration: done ? TextDecoration.lineThrough : null,
+                        color: done ? KsColors.ink3 : KsColors.ink)),
+                Text(description,
+                    style: TextStyle(
+                        color: done ? KsColors.ink4 : KsColors.ink3,
+                        fontSize: 11.5)),
+              ]),
+        ),
+        if (overdue)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: KsColors.dangerTint,
+              borderRadius: BorderRadius.circular(KsRadius.pill),
+            ),
+            child: Text('Overdue · $dueOn',
+                style: GoogleFonts.plusJakartaSans(
+                    color: KsColors.danger,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800)),
+          )
+        else if (!done && dueOn.isNotEmpty)
+          Text('Due $dueOn',
+              style: const TextStyle(
+                  color: KsColors.ink3, fontSize: 10.5)),
+      ]),
     );
   }
 }

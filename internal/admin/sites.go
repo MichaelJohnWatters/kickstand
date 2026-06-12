@@ -16,6 +16,7 @@ type Location struct {
 	ID        domain.LocationID
 	Name      string
 	Address   string
+	Image     []byte // inline header JPEG (~300×120); empty when none seeded
 	CreatedAt time.Time
 }
 
@@ -46,7 +47,7 @@ func CreateLocation(ctx context.Context, scope *tenant.Scope, req CreateLocation
 
 func ListLocations(ctx context.Context, scope *tenant.Scope) ([]Location, error) {
 	rows, err := scope.Conn().QueryContext(ctx, `
-		SELECT id, name, COALESCE(address, ''), created_at
+		SELECT id, name, COALESCE(address, ''), image, created_at
 		FROM locations WHERE school_id = ? ORDER BY name ASC
 	`, string(scope.SchoolID()))
 	if err != nil {
@@ -57,7 +58,7 @@ func ListLocations(ctx context.Context, scope *tenant.Scope) ([]Location, error)
 	for rows.Next() {
 		var l Location
 		var createdStr string
-		if err := rows.Scan(&l.ID, &l.Name, &l.Address, &createdStr); err != nil {
+		if err := rows.Scan(&l.ID, &l.Name, &l.Address, &l.Image, &createdStr); err != nil {
 			return nil, err
 		}
 		l.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)

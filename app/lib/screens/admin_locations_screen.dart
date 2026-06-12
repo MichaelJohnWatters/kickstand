@@ -17,6 +17,8 @@ import '../api/models.dart';
 import '../state/providers.dart';
 import '../state/school.dart';
 import '../theme/tokens.dart';
+import '../util/maps_links.dart';
+import '../widgets/empty_state.dart';
 
 class AdminLocationsScreen extends ConsumerWidget {
   const AdminLocationsScreen({super.key});
@@ -70,7 +72,7 @@ class AdminLocationsScreen extends ConsumerWidget {
               padding: EdgeInsets.symmetric(vertical: 24),
               child: Center(child: CircularProgressIndicator(color: KsColors.primary)),
             ),
-            error: (e, _) => Text('Couldn’t load.\n$e'),
+            error: (e, _) => KsEmptyState.error(message: e.toString()),
             data: (locations) {
               if (locations.isEmpty) {
                 return _empty('No locations yet. Add the first one to start scheduling.');
@@ -85,7 +87,7 @@ class AdminLocationsScreen extends ConsumerWidget {
                   travelAsync.when(
                     loading: () => const SizedBox(
                         height: 100, child: Center(child: CircularProgressIndicator(color: KsColors.primary))),
-                    error: (e, _) => Text('Couldn’t load travel times.\n$e'),
+                    error: (e, _) => KsEmptyState.error(title: 'Couldn’t load travel times', message: e.toString()),
                     data: (rows) => _TravelMatrix(
                       locations: locations,
                       times: rows,
@@ -177,16 +179,16 @@ class _LocationCardState extends ConsumerState<_LocationCard> {
   Future<void> _delete() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: const Text('Delete this location?'),
         content: Text(
             '${widget.location.name} will be removed if no sessions, bikes or travel times reference it.'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
+              onPressed: () => Navigator.pop(dialogCtx, false),
               child: const Text('Cancel')),
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogCtx, true),
             child: const Text('Delete', style: TextStyle(color: KsColors.danger)),
           ),
         ],
@@ -234,24 +236,32 @@ class _LocationCardState extends ConsumerState<_LocationCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Map placeholder — striped diagonal with pin badge top-left and
-          // small edit/delete affordances top-right.
+          // Card header: seeded banner image if we have one, otherwise
+          // the striped diagonal placeholder. Pin badge top-left,
+          // edit/delete affordances top-right.
           SizedBox(
             height: 92,
             child: Stack(children: [
-              const Positioned.fill(
-                child: CustomPaint(painter: _DiagonalStripesPainter()),
+              Positioned.fill(
+                child: l.imageBytes.isNotEmpty
+                    ? Image.memory(
+                        l.imageBytes,
+                        fit: BoxFit.cover,
+                        gaplessPlayback: true,
+                      )
+                    : const CustomPaint(painter: _DiagonalStripesPainter()),
               ),
-              const Positioned.fill(
-                child: Center(
-                  child: Text('site map placeholder',
-                      style: TextStyle(
-                          color: KsColors.ink4,
-                          fontSize: 11,
-                          fontFamily: 'monospace',
-                          letterSpacing: 0.2)),
+              if (l.imageBytes.isEmpty)
+                const Positioned.fill(
+                  child: Center(
+                    child: Text('site map placeholder',
+                        style: TextStyle(
+                            color: KsColors.ink4,
+                            fontSize: 11,
+                            fontFamily: 'monospace',
+                            letterSpacing: 0.2)),
+                  ),
                 ),
-              ),
               Positioned(
                 top: 12,
                 left: 12,
@@ -299,8 +309,32 @@ class _LocationCardState extends ConsumerState<_LocationCard> {
                         fontSize: 16)),
                 if (l.address.isNotEmpty) ...[
                   const SizedBox(height: 2),
-                  Text(l.address,
-                      style: const TextStyle(color: KsColors.ink3, fontSize: 12.5)),
+                  // Address doubles as a Google Maps link — useful for
+                  // staff doing site visits, students looking up the
+                  // training pad before turning up. No API or key
+                  // needed; just the public Maps search URL.
+                  InkWell(
+                    onTap: () => openInGoogleMaps(context, '${l.name}, ${l.address}'),
+                    borderRadius: BorderRadius.circular(KsRadius.sm),
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            l.address,
+                            style: const TextStyle(
+                              color: KsColors.primary,
+                              fontSize: 12.5,
+                              decoration: TextDecoration.underline,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.open_in_new,
+                            size: 12, color: KsColors.primary),
+                      ],
+                    ),
+                  ),
                 ],
                 const SizedBox(height: 12),
                 Row(children: [

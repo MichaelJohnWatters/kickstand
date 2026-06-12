@@ -1,0 +1,44 @@
+{
+  "categories": [
+    {
+      "id": "petrol",
+      "label": "Petrol",
+      "icon": "fuel",
+      "tone": 25,
+      "active": true,
+      "sortOrder": 0
+    },
+    {
+      "id": "lunch",
+      "label": "Lunch",
+      "icon": "cap",
+      "tone": 70,
+      "active": true,
+      "sortOrder": 1
+    },
+    {
+      "id": "parking",
+      "label": "Parking",
+      "icon": "pin",
+      "tone": 277,
+      "active": true,
+      "sortOrder": 2
+    },
+    {
+      "id": "tolls",
+      "label": "Tolls",
+      "icon": "route",
+      "tone": 160,
+      "active": true,
+      "sortOrder": 3
+    },
+    {
+      "id": "other",
+      "label": "Other",
+      "icon": "more-h",
+      "tone": 200,
+      "active": true,
+      "sortOrder": 4
+    }
+  ]
+}

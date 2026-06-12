@@ -1,0 +1,35 @@
+{
+  "expenses": [
+    {
+      "amountPence": 32000,
+      "bikeId": "bike_a2_manual_1",
+      "category": "service",
+      "id": "bm_a2m1_service",
+      "notes": "Major service",
+      "occurredAt": "2026-05-18",
+      "receiptContentType": "image/jpeg",
+      "receiptSizeBytes": 19810,
+      "receiptThumb": "/9j/2wCEAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk8BDg4OExETJhUVJk81LTVPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT//AABEIADIAMgMBIgACEQEDEQH/xAGiAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgsQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+gEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoLEQACAQIEBAMEBwUEBAABAncAAQIDEQQFITEGEkFRB2FxEyIygQgUQpGhscEJIzNS8BVictEKFiQ04SXxFxgZGiYnKCkqNTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqCg4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2dri4+Tl5ufo6ery8/T19vf4+fr/2gAMAwEAAhEDEQA/AO5vHitZFVNJluAwzuhiUgexyRVf7Yn/AEL95/35T/GtK8tkurco0UcpHKiTO3Pvisz+yJf+gfp3/fb/AOFJJC5V2F+2J/0L95/35T/Gj7Yn/Qv3n/flP8aT+yJf+gfp3/fb/wCFH9kS/wDQP07/AL7f/CnZByrsL9sT/oX7z/vyn+NPhuY5ZkjOh3MYY4LvEm1fc81H/ZEv/QP07/vt/wDCrun2Ati0jW1vFIeAYSx4980WQcq7E/2W2/594v8AvgUfZbb/AJ94v++BU1FSHLHsUNTsRdbHWIySLxg3DxDH/AetZDWsCOUcWyspwQdWkBH6Vu3M13G6i2sxOpHJMwTB9ORVFruUsS2mWhPcm5TP8qpDM/7Pbetp/wCDeSj7Pbetp/4N5Kv/AGqT/oF2f/gTH/hR9qk/6Bdn/wCBMf8AhTAofZ7b1tP/AAbyVfsNMCzpM8O1V+ZGS9kkBPbg4BFH2qT/AKBdn/4Ex/4Vat7m9dkB09EiPG9bhWAH0A5pAXqKKKQxsgcxsImVXx8pYZAP0rMOlzE5I0wk/wDTl/8AZVNqFld3UqNbanNaKq4KogYMfXmqn9kan/0MN1/35SmIl/sub00z/wAAv/sqP7Lm9NM/8Av/ALKov7I1P/oYbr/vylH9kan/ANDDdf8AflKAJf7Lm9NM/wDAL/7Kr1pFLDF5crQkA/KIo9gA+mTWZ/ZGp/8AQw3X/flKlt9M1CK4jkl1y4mRWy0bRKAw9KANWiiikMKKKKACiiigAooooAKKKKAP/9k=",
+      "recordedAt": "2026-06-08T22:36:04Z",
+      "recordedBy": "user_owen",
+      "recordedByName": "Owen O'Neill",
+      "vendor": "Lisburn Kawasaki"
+    },
+    {
+      "amountPence": 9800,
+      "bikeId": "bike_a2_manual_1",
+      "category": "tax",
+      "id": "bm_a2m1_tax",
+      "notes": "12 months",
+      "occurredAt": "2026-03-30",
+      "receiptContentType": "image/jpeg",
+      "receiptSizeBytes": 19502,
+      "receiptThumb": "/9j/2wCEAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk8BDg4OExETJhUVJk81LTVPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT//AABEIADIAMgMBIgACEQEDEQH/xAGiAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgsQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+gEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoLEQACAQIEBAMEBwUEBAABAncAAQIDEQQFITEGEkFRB2FxEyIygQgUQpGhscEJIzNS8BVictEKFiQ04SXxFxgZGiYnKCkqNTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqCg4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2dri4+Tl5ufo6ery8/T19vf4+fr/2gAMAwEAAhEDEQA/AO7vJktZFVNLmuAwzuhjUgexyRVf7f8A9QG+/wC/Sf41oXlsl1blGijlI5USZ2598Vmf2RL/ANA/Tv8Avt/8KlRj2Af9v/6gN9/36T/Gj7f/ANQG+/79J/jTP7Il/wCgfp3/AH2/+FH9kS/9A/Tv++3/AMKfLHsA/wC3/wDUBvv+/Sf40+G7EsyRnRbuMMcF3iTavueah/siX/oH6d/32/8AhV3T7AWxaRra3ikPAMJY8e+aXLHsBZ8iH/njH/3yKPIh/wCeMf8A3yKkopcsewyhqdiLrY6xGSReMG4eIY/4D1rIa1gRyji2VlOCDq0gI/St25mu43UW1mJ1I5JmCYPpyKotdyliW0y0J7k3KZ/lVoRn/Z7b1tP/AAbyUfZ7b1tP/BvJV/7VJ/0C7P8A8CY/8KPtUn/QLs//AAJj/wAKYFD7Pbetp/4N5Kv2GmBZ0meHaq/MjJeySAntwcAij7VJ/wBAuz/8CY/8KtW9zeuyA6eiRHjetwrAD6Ac0gL1FFFIY2QOY2ETKr4+UsMgH6VmHS5ickaYSf8Apy/+yqbULK7upUa21Oa0VVwVRAwY+vNVP7I1P/oYbr/vylMRL/Zc3ppn/gF/9lR/Zc3ppn/gF/8AZVF/ZGp/9DDdf9+Uo/sjU/8AoYbr/vylAEv9lzemmf8AgF/9lV60ilhi8uVoSAflEUewAfTJrM/sjU/+hhuv+/KVLb6ZqEVxHJLrlxMitlo2iUBh6UAatFFFIYUUUUAFFFFABRRRQAUUUUAf/9k=",
+      "recordedAt": "2026-06-08T22:36:04Z",
+      "recordedBy": "user_owen",
+      "recordedByName": "Owen O'Neill",
+      "vendor": "DVA"
+    }
+  ],
+  "ytdPence": 41800
+}

@@ -75,6 +75,7 @@ var (
 	ErrNoSuitableBike       = errors.New("booking: no suitable bike is available")
 	ErrBikeNotSuitable      = errors.New("booking: chosen bike is not suitable for this session")
 	ErrInstructorUnqualified = errors.New("booking: instructor is not qualified for this course type")
+	ErrNoInstructorAssigned  = errors.New("booking: session has no instructor assigned yet")
 )
 
 // Book runs the constraint engine and creates the booking row.
@@ -181,14 +182,25 @@ func bookInTx(ctx context.Context, tx *tenant.Scope, req Request, now time.Time)
 		return nil, ErrStudentNotActive
 	}
 
-	// Defensive: confirm the instructor on the session is qualified for the
-	// course type. This is invariant-checked at session creation, but a
-	// later qualification revocation could leave a stale session.
-	qualified, err := instructorIsQualified(ctx, tx, sess.instructorID, sess.courseTypeID)
+	// Session needs at least one instructor (any of them qualified) to
+	// be bookable. Manager-scaffolded sessions with no instructor yet
+	// fail here — the calendar surfaces them with a "Needs instructor"
+	// pill so the manager knows to assign.
+	qualified, err := atLeastOneInstructorQualified(ctx, tx, sess.id, sess.courseTypeID)
 	if err != nil {
 		return nil, err
 	}
 	if !qualified {
+		// Distinguish "no instructor at all" (manager hasn't filled the
+		// shell) from "instructors present but none qualified for this
+		// course" (rarer; happens after a qualification revocation).
+		anyAssigned, err := sessionHasAnyInstructor(ctx, tx, sess.id)
+		if err != nil {
+			return nil, err
+		}
+		if !anyAssigned {
+			return nil, ErrNoInstructorAssigned
+		}
 		return nil, ErrInstructorUnqualified
 	}
 
@@ -229,6 +241,13 @@ func bookInTx(ctx context.Context, tx *tenant.Scope, req Request, now time.Time)
 
 	booking, err := insertBooking(ctx, tx, req, sess, assignedBike, now)
 	if err != nil {
+		return nil, err
+	}
+
+	// Auto-charge the standard course price (no-op when price_pence is
+	// unset). Same tx as the booking so the ledger never falls out of
+	// step with the bookings table.
+	if err := autoChargeForBooking(ctx, tx, booking, sess.courseTypeID, now); err != nil {
 		return nil, err
 	}
 
@@ -319,12 +338,23 @@ func loadStudent(ctx context.Context, tx *tenant.Scope, id domain.UserID) (*stud
 	return &s, nil
 }
 
-func instructorIsQualified(ctx context.Context, tx *tenant.Scope, instructorID domain.UserID, courseTypeID domain.CourseTypeID) (bool, error) {
+// atLeastOneInstructorQualified returns true when ANY assigned
+// instructor on the session is qualified for the course. The session
+// is bookable if a qualified hand is around — co-instructors don't
+// need to be qualified for everything.
+func atLeastOneInstructorQualified(ctx context.Context, tx *tenant.Scope, sessionID domain.SessionID, courseTypeID domain.CourseTypeID) (bool, error) {
 	const q = `
-		SELECT 1 FROM instructor_qualifications
-		WHERE school_id = ? AND instructor_id = ? AND course_type_id = ?
+		SELECT 1
+		FROM session_instructors si
+		JOIN instructor_accreditations iq
+		     ON iq.school_id = si.school_id
+		    AND iq.instructor_id = si.instructor_id
+		    AND iq.course_type_id = ?
+		WHERE si.school_id = ? AND si.session_id = ?
+		LIMIT 1
 	`
-	row := tx.Conn().QueryRowContext(ctx, q, string(tx.SchoolID()), string(instructorID), string(courseTypeID))
+	row := tx.Conn().QueryRowContext(ctx, q,
+		string(courseTypeID), string(tx.SchoolID()), string(sessionID))
 	var ok int
 	err := row.Scan(&ok)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -334,6 +364,20 @@ func instructorIsQualified(ctx context.Context, tx *tenant.Scope, instructorID d
 		return false, fmt.Errorf("instructor qualified check: %w", err)
 	}
 	return true, nil
+}
+
+// sessionHasAnyInstructor reports whether anyone — qualified or not —
+// is on the session. Used to distinguish "needs instructor" from
+// "instructor present but unqualified".
+func sessionHasAnyInstructor(ctx context.Context, tx *tenant.Scope, sessionID domain.SessionID) (bool, error) {
+	var n int
+	if err := tx.Conn().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM session_instructors WHERE school_id = ? AND session_id = ?`,
+		string(tx.SchoolID()), string(sessionID),
+	).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func countActiveBookings(ctx context.Context, tx *tenant.Scope, sessionID domain.SessionID) (int, error) {

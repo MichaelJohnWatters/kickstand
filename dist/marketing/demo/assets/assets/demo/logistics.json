@@ -1,0 +1,66 @@
+{
+  "date": "2026-06-09",
+  "destinations": [
+    {
+      "locationId": "loc_belfast",
+      "locationName": "Belfast",
+      "moves": [
+        {
+          "bikeCategory": "A2",
+          "bikeId": "bike_a2_manual_3",
+          "bikeNickname": "Honda CB500F",
+          "bikeRegistration": "OEZ 6634",
+          "bookingId": "bk_jordan_belfast_am",
+          "courseTypeName": "Practice MOD 2",
+          "fromLocationId": "loc_newry",
+          "fromLocationName": "Newry",
+          "sessionId": "sess_prac_belfast_am",
+          "sessionStartsAt": "2026-06-09T09:00:00Z",
+          "studentId": "user_student_jordan",
+          "studentName": "Jordan Reid",
+          "toLocationId": "loc_belfast",
+          "toLocationName": "Belfast"
+        },
+        {
+          "bikeCategory": "A2",
+          "bikeId": "bike_a2_manual_2",
+          "bikeNickname": "Honda CB500F",
+          "bikeRegistration": "OEZ 6633",
+          "bookingId": "bk_mark_belfast_pm",
+          "courseTypeName": "Practice MOD 2",
+          "fromLocationId": "loc_newry",
+          "fromLocationName": "Newry",
+          "sessionId": "sess_prac_belfast_pm",
+          "sessionStartsAt": "2026-06-09T13:30:00Z",
+          "studentId": "user_student_mark",
+          "studentName": "Mark Doherty",
+          "toLocationId": "loc_belfast",
+          "toLocationName": "Belfast"
+        }
+      ]
+    },
+    {
+      "locationId": "loc_lisburn",
+      "locationName": "Lisburn",
+      "moves": [
+        {
+          "bikeCategory": "A1",
+          "bikeId": "bike_a1_auto_1",
+          "bikeNickname": "Lexmoto Echo",
+          "bikeRegistration": "LXZ 2204",
+          "bookingId": "bk_emma_lisburn_am",
+          "courseTypeName": "CBT 125",
+          "fromLocationId": "loc_belfast",
+          "fromLocationName": "Belfast",
+          "sessionId": "sess_cbt_lisburn_am",
+          "sessionStartsAt": "2026-06-09T08:30:00Z",
+          "studentId": "user_student_emma",
+          "studentName": "Emma Wilson",
+          "toLocationId": "loc_lisburn",
+          "toLocationName": "Lisburn"
+        }
+      ]
+    }
+  ],
+  "totalMoves": 3
+}

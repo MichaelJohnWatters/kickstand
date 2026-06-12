@@ -1,17 +1,20 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/michaeljohnwatters/kickstand/internal/domain"
 	"github.com/michaeljohnwatters/kickstand/internal/expenses"
+	"github.com/michaeljohnwatters/kickstand/internal/media"
 	"github.com/michaeljohnwatters/kickstand/internal/tenant"
 )
 
@@ -72,48 +75,55 @@ func (s *Server) handleUpsertExpenseCategories(w http.ResponseWriter, r *http.Re
 // so we never end up with a DB row pointing at a missing blob.
 func (s *Server) handleSubmitExpense(w http.ResponseWriter, r *http.Request) {
 	id, _ := identityFromContext(r.Context())
-	if id.Role == domain.RoleStudent {
-		writeError(w, http.StatusForbidden, "forbidden", "staff only")
+	// Only instructors can submit receipts. Admins/owners read but never
+	// write — they pay reimbursements, they don't claim them.
+	if id.Role != domain.RoleInstructor {
+		writeError(w, http.StatusForbidden, "forbidden", "instructors only")
 		return
 	}
 	if err := r.ParseMultipartForm(8 << 20); err != nil { // 8 MB max
 		writeError(w, http.StatusBadRequest, "bad_form", err.Error())
 		return
 	}
-	file, header, err := r.FormFile("receipt")
+	file, _, err := r.FormFile("receipt")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "receipt_required", "missing receipt file")
 		return
 	}
 	defer file.Close()
 
-	// Stage the receipt into storage. Key format mirrors what the GCS
-	// implementation will use post-migration.
-	ext := strings.ToLower(filepath.Ext(header.Filename))
-	if ext == "" {
-		ext = ".jpg"
+	// Decode → resize to MaxLongEdge → JPEG q80, plus a 50×50 thumb.
+	// All persisted receipts are JPEGs regardless of what the phone
+	// uploaded, so the storage key always carries `.jpg`.
+	processed, err := media.ProcessReceipt(file)
+	if err != nil {
+		if errors.Is(err, media.ErrUnsupported) {
+			writeError(w, http.StatusBadRequest, "unsupported_image",
+				"receipt must be a JPEG, PNG, or GIF")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "image_process_failed", err.Error())
+		return
 	}
+
 	expID := domain.ExpenseID(domain.NewID())
-	key := fmt.Sprintf("expenses/%s/receipt%s", expID, ext)
-	if _, err := s.Files.Put(key, file); err != nil {
+	key := fmt.Sprintf("expenses/%s/receipt.jpg", expID)
+	if _, err := s.Files.Put(key, bytes.NewReader(processed.Main)); err != nil {
 		writeError(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
 
 	occurredAt, err := time.Parse(time.RFC3339, r.FormValue("occurredAt"))
 	if err != nil {
+		_ = s.Files.Delete(key)
 		writeError(w, http.StatusBadRequest, "bad_occurred_at", "occurredAt must be RFC3339")
 		return
 	}
 	amount, err := parseIntField(r, "amountPence")
 	if err != nil {
+		_ = s.Files.Delete(key)
 		writeError(w, http.StatusBadRequest, "bad_amount", err.Error())
 		return
-	}
-
-	contentType := header.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "image/jpeg"
 	}
 
 	scope := tenant.NewScope(s.DB, id.SchoolID)
@@ -125,8 +135,9 @@ func (s *Server) handleSubmitExpense(w http.ResponseWriter, r *http.Request) {
 		Where:              strings.TrimSpace(r.FormValue("where")),
 		Notes:              strings.TrimSpace(r.FormValue("notes")),
 		ReceiptStorageKey:  key,
-		ReceiptContentType: contentType,
-		ReceiptSizeBytes:   int(header.Size),
+		ReceiptContentType: "image/jpeg",
+		ReceiptSizeBytes:   processed.MainBytes,
+		ReceiptThumb:       processed.Thumb,
 	})
 	if err != nil {
 		// Engine rejected — clean up the receipt so the bucket doesn't fill
@@ -164,6 +175,14 @@ func (s *Server) handleListMyExpenses(w http.ResponseWriter, r *http.Request) {
 // DELETE /me/expenses/{id} — instructor withdraws a pending expense.
 func (s *Server) handleWithdrawExpense(w http.ResponseWriter, r *http.Request) {
 	id, _ := identityFromContext(r.Context())
+	// Engine already enforces "you can only withdraw your own", but the
+	// role gate here makes it explicit: admins/owners never delete
+	// receipts (audit trail), only instructors withdraw their own
+	// pending submissions.
+	if id.Role != domain.RoleInstructor {
+		writeError(w, http.StatusForbidden, "forbidden", "instructors only")
+		return
+	}
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	ex, err := expenses.Withdraw(r.Context(), scope, expenses.WithdrawRequest{
 		ID:           domain.ExpenseID(r.PathValue("id")),
@@ -178,11 +197,12 @@ func (s *Server) handleWithdrawExpense(w http.ResponseWriter, r *http.Request) {
 
 // --- Admin side ---
 
-// GET /expenses?status=pending|... — staff-only review queue.
+// GET /expenses?status=pending|... — admin/owner review queue.
+// Instructors see only their own list via GET /me/expenses.
 func (s *Server) handleListExpensesForReview(w http.ResponseWriter, r *http.Request) {
 	id, _ := identityFromContext(r.Context())
-	if id.Role == domain.RoleStudent {
-		writeError(w, http.StatusForbidden, "forbidden", "staff only")
+	if id.Role != domain.RoleAdmin && id.Role != domain.RoleOwner {
+		writeError(w, http.StatusForbidden, "forbidden", "owner / manager only")
 		return
 	}
 	scope := tenant.NewScope(s.DB, id.SchoolID)
@@ -202,9 +222,15 @@ func (s *Server) handleListExpensesForReview(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// GET /expenses/{id} — single expense for the admin detail modal.
+// GET /expenses/{id} — single expense for the admin detail modal or
+// the instructor's own expense detail view. Students have nothing to
+// see here.
 func (s *Server) handleGetExpense(w http.ResponseWriter, r *http.Request) {
 	id, _ := identityFromContext(r.Context())
+	if id.Role == domain.RoleStudent {
+		writeError(w, http.StatusForbidden, "forbidden", "staff only")
+		return
+	}
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	ex, err := expenses.Get(r.Context(), scope, domain.ExpenseID(r.PathValue("id")))
 	if err != nil {
@@ -220,8 +246,13 @@ func (s *Server) handleGetExpense(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /expenses/{id}/receipt — auth-gated streaming receipt image.
+// Students never see receipts; instructors only their own.
 func (s *Server) handleGetExpenseReceipt(w http.ResponseWriter, r *http.Request) {
 	id, _ := identityFromContext(r.Context())
+	if id.Role == domain.RoleStudent {
+		writeError(w, http.StatusForbidden, "forbidden", "staff only")
+		return
+	}
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	ex, err := expenses.Get(r.Context(), scope, domain.ExpenseID(r.PathValue("id")))
 	if err != nil {
@@ -338,6 +369,10 @@ func withTotals(ctx context.Context, scope *tenant.Scope, instr domain.UserID, r
 }
 
 // expensePayload is the wire shape returned by every Expense-returning endpoint.
+//
+// The 50×50 thumbnail is base64-encoded into receiptThumb so the
+// reviewer list paints a real preview per row without a per-row HTTP
+// fetch. Around 2 KB of payload per expense; trivial.
 func expensePayload(e *expenses.Expense) map[string]any {
 	row := map[string]any{
 		"id":                 e.ID,
@@ -355,6 +390,9 @@ func expensePayload(e *expenses.Expense) map[string]any {
 		"receiptContentType": e.ReceiptContentType,
 		"receiptSizeBytes":   e.ReceiptSizeBytes,
 		"submittedAt":        e.SubmittedAt.Format(time.RFC3339),
+	}
+	if len(e.ReceiptThumb) > 0 {
+		row["receiptThumb"] = base64.StdEncoding.EncodeToString(e.ReceiptThumb)
 	}
 	if e.ReviewedBy != "" {
 		row["reviewedBy"] = e.ReviewedBy

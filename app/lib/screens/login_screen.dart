@@ -63,6 +63,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     ref.read(authControllerProvider.notifier).login(email, password);
   }
 
+  Future<void> _openForgotPassword(BuildContext context, String prefill) async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _ForgotPasswordDialog(initialEmail: prefill.trim()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authControllerProvider);
@@ -123,7 +130,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 const SizedBox(height: 16),
                 _ErrorBanner(message: auth.error!),
               ],
-              const SizedBox(height: 24),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () => _openForgotPassword(context, _email.text),
+                  child: const Text('Forgot password?'),
+                ),
+              ),
+              const SizedBox(height: 12),
               ElevatedButton(
                 onPressed: auth.loading ? null : _submit,
                 child: auth.loading
@@ -209,6 +223,111 @@ class _DevAccountPicker extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ForgotPasswordDialog extends ConsumerStatefulWidget {
+  final String initialEmail;
+  const _ForgotPasswordDialog({required this.initialEmail});
+
+  @override
+  ConsumerState<_ForgotPasswordDialog> createState() =>
+      _ForgotPasswordDialogState();
+}
+
+class _ForgotPasswordDialogState extends ConsumerState<_ForgotPasswordDialog> {
+  late final TextEditingController _email =
+      TextEditingController(text: widget.initialEmail);
+  bool _sending = false;
+  bool _sent = false;
+
+  @override
+  void dispose() {
+    _email.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final email = _email.text.trim();
+    if (email.isEmpty || !email.contains('@')) return;
+    setState(() => _sending = true);
+    final ok =
+        await ref.read(authControllerProvider.notifier).sendPasswordReset(email);
+    if (!mounted) return;
+    setState(() {
+      _sending = false;
+      // We always show "sent" if the SDK didn't throw a transient error,
+      // so we never leak whether an email is registered. AuthController
+      // already collapses `user-not-found` / `invalid-email` into true.
+      _sent = ok;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Reset your password'),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (!_sent) ...[
+              const Text(
+                'We’ll email you a link to set a new password.',
+                style: TextStyle(color: KsColors.ink2, fontSize: 13.5),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _email,
+                keyboardType: TextInputType.emailAddress,
+                autocorrect: false,
+                decoration: const InputDecoration(labelText: 'Email'),
+                onSubmitted: (_) => _send(),
+              ),
+            ] else
+              Row(
+                children: [
+                  const Icon(Icons.check_circle, color: KsColors.success),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'If an account exists for ${_email.text.trim()}, '
+                      'you’ll get a reset link in a moment.',
+                      style: const TextStyle(
+                          color: KsColors.ink, fontSize: 13.5, height: 1.3),
+                    ),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        if (!_sent)
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        if (!_sent)
+          ElevatedButton(
+            onPressed: _sending ? null : _send,
+            child: _sending
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        color: Colors.white, strokeWidth: 2.4))
+                : const Text('Send link'),
+          ),
+        if (_sent)
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Done'),
+          ),
+      ],
     );
   }
 }
