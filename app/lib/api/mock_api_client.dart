@@ -151,6 +151,13 @@ class MockApiClient extends ApiClient {
         return _seed['bikes'];
       case '/admin/bikes/gps':
         return _seed['bike_gps'] ?? _syntheticBikeGpsFromBikes();
+      case '/admin/analytics/bike-utilisation':
+        return _seed['analytics_bike_utilisation'] ?? _syntheticBikeUtilisation();
+      case '/admin/analytics/instructor-utilisation':
+        return _seed['analytics_instructor_utilisation'] ??
+            _syntheticInstructorUtilisation();
+      case '/admin/analytics/funnel':
+        return _seed['analytics_funnel'] ?? _syntheticFunnel();
       case '/course-types':
         return _seed['course_types'];
       case '/instructors':
@@ -451,6 +458,93 @@ class MockApiClient extends ApiClient {
 
   String _studentId() => (_seed['alex_me'] as Map<String, dynamic>?)?['userId'] ?? 'user_stu';
   String _instructorId() => (_seed['dave_me'] as Map<String, dynamic>?)?['userId'] ?? 'user_instr';
+
+  // Synthesised analytics payloads — same idea as the GPS synth below.
+  // Once dump-demo.sh produces analytics_*.json the seeded versions
+  // override these.
+  Map<String, dynamic> _syntheticBikeUtilisation() {
+    final base = (_seed['bikes'] as Map<String, dynamic>?) ?? const {};
+    final bikes = (base['bikes'] as List?) ?? const [];
+    final out = <Map<String, dynamic>>[];
+    for (var i = 0; i < bikes.length; i++) {
+      final b = (bikes[i] as Map).cast<String, dynamic>();
+      final sessions = 8 + (i * 3) % 14;
+      final booked = sessions * 4 * 60;
+      final available = 30 * 8 * 60;
+      out.add({
+        'bikeId': b['id'],
+        'nickname': b['nickname'] ?? '',
+        'registration': b['registration'] ?? '',
+        'sessionsCount': sessions,
+        'bookedMinutes': booked,
+        'availableMinutes': available,
+        'utilisationPct': booked / available * 100,
+        'lastSessionAt': DateTime.now().toUtc().toIso8601String(),
+      });
+    }
+    return {
+      'bikes': out,
+      'window': {
+        'from':
+            DateTime.now().subtract(const Duration(days: 30)).toUtc().toIso8601String(),
+        'to': DateTime.now().toUtc().toIso8601String(),
+      }
+    };
+  }
+
+  Map<String, dynamic> _syntheticInstructorUtilisation() {
+    final base = (_seed['instructors'] as Map<String, dynamic>?) ?? const {};
+    final instrs = (base['instructors'] as List?) ?? const [];
+    final out = <Map<String, dynamic>>[];
+    for (var i = 0; i < instrs.length; i++) {
+      final inst = (instrs[i] as Map).cast<String, dynamic>();
+      final sessions = 18 - i * 3;
+      final earned = sessions * 7500;
+      final paid = (earned * 0.7).round();
+      final trend = List<int>.generate(
+          8, (k) => ((sessions / 8).round() + ((i + k) % 3) - 1).clamp(0, 99).toInt());
+      out.add({
+        'instructorId': inst['id'] ?? 'instr_$i',
+        'name': inst['name'] ?? 'Instructor ${i + 1}',
+        'sessionsTaught': sessions,
+        'hoursTaughtX10': sessions * 40, // 4 h × 10
+        'earnedPence': earned,
+        'paidPence': paid,
+        'outstandingPence': earned - paid,
+        'weeklyTrend': trend,
+      });
+    }
+    return {
+      'instructors': out,
+      'window': {
+        'from':
+            DateTime.now().subtract(const Duration(days: 30)).toUtc().toIso8601String(),
+        'to': DateTime.now().toUtc().toIso8601String(),
+      }
+    };
+  }
+
+  Map<String, dynamic> _syntheticFunnel() {
+    return {
+      'signupToFirstBookingPct': 78.0,
+      'signupSample': 14,
+      'cbtCompletionPct': 92.0,
+      'cbtSample': 24,
+      'theoryPassPct': 67.0,
+      'theorySample': 12,
+      'practicalPassPct': 81.0,
+      'practicalSample': 16,
+      'perInstructorPassRate': <Map<String, dynamic>>[
+        {'instructorId': 'user_instr_dave', 'name': 'Dave', 'attempts': 9, 'passes': 8, 'passPct': 89.0},
+        {'instructorId': 'user_instr_priya', 'name': 'Priya', 'attempts': 6, 'passes': 4, 'passPct': 66.0},
+      ],
+      'window': {
+        'from':
+            DateTime.now().subtract(const Duration(days: 30)).toUtc().toIso8601String(),
+        'to': DateTime.now().toUtc().toIso8601String(),
+      }
+    };
+  }
 
   // Synthesises a plausible /admin/bikes/gps payload from whatever the
   // fleet seed has, so demo mode doesn't 404 the live-map screen even
