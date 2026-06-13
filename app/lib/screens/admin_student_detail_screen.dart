@@ -85,6 +85,13 @@ class AdminStudentDetailScreen extends ConsumerWidget {
                 }
                 return Column(children: [...left, const SizedBox(height: 16), ...right]);
               }),
+              const SizedBox(height: 24),
+              _DangerZoneCard(
+                studentId: studentId,
+                anonymisedAt: (basics['anonymisedAt'] as String?) ?? '',
+                onAnonymised: () =>
+                    ref.invalidate(_studentDetailProvider(studentId)),
+              ),
             ],
           );
         },
@@ -1198,5 +1205,122 @@ class _KindOption extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Bottom-of-page card that hosts irreversible operations on a
+/// student. Today: the GDPR Article 17 right-to-erasure flow that
+/// anonymises the user. If the student is already anonymised, the
+/// card shows a read-only confirmation pill instead of the button.
+class _DangerZoneCard extends ConsumerWidget {
+  final String studentId;
+  final String anonymisedAt;
+  final VoidCallback onAnonymised;
+  const _DangerZoneCard({
+    required this.studentId,
+    required this.anonymisedAt,
+    required this.onAnonymised,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scrubbed = anonymisedAt.isNotEmpty;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: KsColors.dangerTint,
+        borderRadius: BorderRadius.circular(KsRadius.lg),
+        border: Border.all(color: KsColors.danger.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const Icon(Icons.shield_outlined, color: KsColors.danger, size: 18),
+            const SizedBox(width: 8),
+            Text(
+              'Danger zone · GDPR',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                color: KsColors.danger,
+              ),
+            ),
+          ]),
+          const SizedBox(height: 10),
+          if (scrubbed)
+            Text(
+              'This account was anonymised on ${_formatDate(anonymisedAt)}. '
+              'PII has been scrubbed; bookings, charges, and audit history '
+              'have been preserved per financial-retention obligations.',
+              style: const TextStyle(color: KsColors.ink2, fontSize: 13, height: 1.4),
+            )
+          else ...[
+            const Text(
+              'Right to erasure (Article 17). Replaces name / email / phone '
+              'with placeholders, disables Firebase sign-in, and stamps an '
+              'erasure timestamp. Bookings, charges, payments, and audit log '
+              'are preserved so the school\'s records stay intact. '
+              'This action is irreversible.',
+              style: TextStyle(color: KsColors.ink2, fontSize: 13, height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: OutlinedButton.icon(
+                onPressed: () => _confirmAndAnonymise(context, ref),
+                icon: const Icon(Icons.delete_forever, size: 18),
+                label: const Text('Anonymise this account'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: KsColors.danger,
+                  side: const BorderSide(color: KsColors.danger),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _confirmAndAnonymise(BuildContext context, WidgetRef ref) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Anonymise this account?'),
+        content: const Text(
+          'This permanently scrubs identifying data and disables sign-in. '
+          'It cannot be undone. The student\'s bookings and ledger will '
+          'remain on the school\'s books with placeholder names.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: KsColors.danger),
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            child: const Text('Anonymise'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    if (!context.mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref.read(apiClientProvider).anonymiseUser(userId: studentId);
+      onAnonymised();
+      messenger.showSnackBar(const SnackBar(content: Text('Account anonymised.')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Anonymise failed: $e')));
+    }
+  }
+
+  String _formatDate(String iso) {
+    final at = DateTime.tryParse(iso);
+    if (at == null) return iso;
+    return DateFormat('d MMM yyyy · HH:mm').format(at.toLocal());
   }
 }

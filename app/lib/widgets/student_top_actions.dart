@@ -3,6 +3,10 @@
 // know where notifications and "sign out" live, no matter which tab
 // they're on.
 
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -32,6 +36,7 @@ class StudentTopActions extends ConsumerWidget {
             initials: initials,
             onLogout: () =>
                 ref.read(authControllerProvider.notifier).logout(),
+            onDownloadData: () => _downloadMyData(context, ref),
           ),
         ],
       ),
@@ -39,10 +44,41 @@ class StudentTopActions extends ConsumerWidget {
   }
 }
 
+/// Calls /me/data-export, encodes the JSON, and pops a native save
+/// dialog (or browser download on web). GDPR Article 20 right of
+/// access — kept inside the avatar menu so it's discoverable without
+/// adding a top-level "Privacy" screen.
+Future<void> _downloadMyData(BuildContext context, WidgetRef ref) async {
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    final data = await ref.read(apiClientProvider).myDataExport();
+    final pretty = const JsonEncoder.withIndent('  ').convert(data);
+    final bytes = Uint8List.fromList(utf8.encode(pretty));
+    final saved = await FilePicker.platform.saveFile(
+      dialogTitle: 'Save my Kickstand data',
+      fileName: 'kickstand-data-export.json',
+      bytes: bytes,
+      type: FileType.custom,
+      allowedExtensions: const ['json'],
+    );
+    if (!context.mounted) return;
+    if (saved == null) return; // user cancelled or browser auto-downloaded.
+    messenger.showSnackBar(SnackBar(content: Text('Saved to $saved')));
+  } catch (e) {
+    if (!context.mounted) return;
+    messenger.showSnackBar(SnackBar(content: Text('Export failed: $e')));
+  }
+}
+
 class _StudentAvatar extends StatelessWidget {
   final String initials;
   final VoidCallback onLogout;
-  const _StudentAvatar({required this.initials, required this.onLogout});
+  final VoidCallback onDownloadData;
+  const _StudentAvatar({
+    required this.initials,
+    required this.onLogout,
+    required this.onDownloadData,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -53,8 +89,19 @@ class _StudentAvatar extends StatelessWidget {
           borderRadius: BorderRadius.circular(KsRadius.md)),
       onSelected: (v) {
         if (v == 'logout') onLogout();
+        if (v == 'export') onDownloadData();
       },
       itemBuilder: (_) => const [
+        PopupMenuItem<String>(
+          value: 'export',
+          child: Row(
+            children: [
+              Icon(Icons.download_outlined, size: 18, color: KsColors.ink2),
+              SizedBox(width: 8),
+              Text('Download my data'),
+            ],
+          ),
+        ),
         PopupMenuItem<String>(
           value: 'logout',
           child: Row(

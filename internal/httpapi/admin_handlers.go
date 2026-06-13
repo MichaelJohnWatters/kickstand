@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	firebaseauth "firebase.google.com/go/v4/auth"
@@ -475,6 +476,36 @@ func (s *Server) handleListBikeGPS(w http.ResponseWriter, r *http.Request) {
 		out = append(out, view)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"bikes": out})
+}
+
+// GET /bikes/{id}/gps/history?since=&limit=
+//
+// Returns one bike's recent GPS fixes for the breadcrumb-trail panel
+// on the live map. Admin/owner only — same gate as the rest of the
+// fleet surface.
+func (s *Server) handleListBikeGPSHistory(w http.ResponseWriter, r *http.Request) {
+	id, _ := identityFromContext(r.Context())
+	if !requireAdminOwner(w, id) {
+		return
+	}
+	scope := tenant.NewScope(s.DB, id.SchoolID)
+	bikeID := domain.BikeID(r.PathValue("id"))
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	fixes, err := admin.ListBikeGPSHistory(r.Context(), scope, bikeID, q.Get("since"), limit)
+	if err != nil {
+		writeAdminError(w, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(fixes))
+	for _, f := range fixes {
+		out = append(out, map[string]any{
+			"at":  f.At,
+			"lat": f.Lat,
+			"lng": f.Lng,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"fixes": out})
 }
 
 // ----- Course types -----

@@ -246,8 +246,13 @@ a manual smoke through Owen's admin.
 
 Per plan §7 phase 3 and a deliberate scope discipline:
 
-- **GPS time-series history / route playback** — needs a `bike_gps_log`
-  table, retention policy, playback UI. Big build, deferred.
+- ~~**GPS time-series history / route playback** — needs a `bike_gps_log`
+  table, retention policy, playback UI. Big build, deferred.~~ _Shipped
+  2026-06-12 as `bike_gps_fixes` (migration 0027). Snapshot + history
+  write in one tx; tapping a marker renders a polyline of the last 24h
+  with `liveStatus`-coloured dots. No retention policy yet (low volume
+  at school scale); full route-playback timeline scrubber is still
+  phase 3._
 - **Geofencing / theft alerts** — phase 3 with a rules engine + notify
   hook.
 - **Mileage from GPS** — phase 3 (the chunk-2 mileage column is manual
@@ -291,3 +296,67 @@ Per plan §7 phase 3 and a deliberate scope discipline:
   state — sessions that are starts_at ≤ now ≤ ends_at. Cheap to compute
   on read, no new column needed. Mitigation: helper in
   `internal/admin/bike_gps.go`, single source of truth.
+
+---
+
+## Hardware integration paths (commercial)
+
+When a school wants to actually wire trackers to bikes, the backend
+endpoint (`POST /bikes/{id}/gps`) already accepts the data — we never
+shipped a vendor integration (locked decision §3). The school's
+trackers need to reach that endpoint somehow. Three paths in
+descending order of how easy they are to support:
+
+1. **Hardwired commercial OBD/CAN tracker with custom-server config.**
+   _Recommended for fleets ≥ 5 bikes._ Teltonika FMC003 / FMB003
+   (~£60-70), Queclink GV57CG (~£90), or Concox JM-VL03. Hardwired
+   into the bike's ignition so they only draw current when the bike's
+   on; LTE-M / NB-IoT for thin SIM plans (~£2-5/month each). Critically
+   these let you set a **custom server URL** in the device config — so
+   they push directly to a thin adapter we'd write that translates
+   their binary protocol (Codec 8 for Teltonika, GTPL for Queclink)
+   into our JSON shape and forwards to `POST /bikes/{id}/gps`. ~1
+   day's work per protocol; covers ~80% of the commercial market.
+
+   _Teltonika adapter shipped 2026-06-13_ — `cmd/teltonika-adapter`
+   is a standalone Go binary that terminates Codec-8 TCP connections,
+   reads the IMEI handshake, looks up the bike id from a JSON config
+   binding map, and forwards each GPS record to the main API. Pointed
+   at a real FMC003 the operator workflow is: build the binary
+   (`make build` produces `bin/teltonika-adapter`), drop a config.json
+   with `{apiBaseUrl, apiToken, listenAddr, bindings: {imei → bikeId}}`,
+   and configure the device's server URL to point at it. The
+   Queclink GTPL flavour can ride alongside as a second binary
+   sharing the same internal/teltonika split when it's needed.
+
+2. **Traccar (or a similar open-source aggregator) as middleware.**
+   _Recommended when a school already has mixed trackers._ Traccar
+   (https://www.traccar.org/) speaks ~200 tracker protocols out of
+   the box. Stand it up on a £5/month VPS, point any consumer GPS
+   module at it, and configure its **Forward** feature to call our
+   webhook with `{lat, lng}`. Pros: any tracker the school can find
+   on Amazon Just Works. Cons: another service to run, mostly-Java
+   stack, vendor lock-in to Traccar's mapping of device id → our
+   bike_id.
+
+3. **Consumer subscription trackers (Monimoto, Spytec, Invoxia,
+   Apple AirTag, etc.).** _Not recommended for production fleets._
+   These push to the vendor's SaaS dashboard and most don't expose
+   webhooks. Workable as a stopgap if you scrape the vendor's
+   undocumented API or run a phone app that polls the dashboard and
+   re-emits, but it's brittle and the vendor can change their API
+   any time. Useful for a school dipping a toe in — buy one Spytec,
+   tape it to a bike, prove the flow end-to-end — before committing
+   to (1) or (2).
+
+**Decision deferred** until a school actually asks for live tracking.
+Today's GPS data is staff-manual / pilot-tracker; the screen exists
+mainly so the demo is honest about what's possible. When this lands
+on the roadmap, default recommendation is (1) Teltonika FMC003 with
+a thin Codec-8 adapter — single integration covers the most likely
+SKU and isn't tied to a third-party service.
+
+**Power note.** Bikes sit idle overnight. Motion-wake on the
+tracker (every device above supports it) is mandatory; permanently-on
+trackers will flatten the bike battery in days. Document this in the
+fleet-onboarding guide when (1) ships.

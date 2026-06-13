@@ -101,6 +101,12 @@ func (s *Server) routeTable() []routeSpec {
 		// Audit log — admin/owner read-only view of the mutation history.
 		{"GET", "/audit", false, s.handleListAudit},
 
+		// GDPR / privacy — Article 20 (data portability) + Article 17
+		// (right to erasure). Anyone can download their own data;
+		// admins/owners trigger anonymisation of another user.
+		{"GET", "/me/data-export", false, s.handleMyDataExport},
+		{"POST", "/admin/users/{id}/anonymise", false, s.handleAnonymiseUser},
+
 		// Compliance dashboard — bike docs, instructor accreditation, school insurance.
 		// Per-course accreditation expiries are managed on the Instructors
 		// page via PUT /instructors/{id}/accreditations.
@@ -168,6 +174,7 @@ func (s *Server) routeTable() []routeSpec {
 		{"POST", "/bikes/{id}/mileage", false, s.handleRecordBikeMileage},
 		{"POST", "/bikes/{id}/gps", false, s.handleUpdateBikeGPS},
 		{"GET", "/admin/bikes/gps", false, s.handleListBikeGPS},
+		{"GET", "/bikes/{id}/gps/history", false, s.handleListBikeGPSHistory},
 		{"GET", "/admin/analytics/bike-utilisation", false, s.handleAnalyticsBikeUtilisation},
 		{"GET", "/admin/analytics/instructor-utilisation", false, s.handleAnalyticsInstructorUtilisation},
 		{"GET", "/admin/analytics/funnel", false, s.handleAnalyticsFunnel},

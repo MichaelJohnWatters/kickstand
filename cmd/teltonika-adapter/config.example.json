@@ -1,0 +1,9 @@
+{
+  "apiBaseUrl": "http://localhost:8765",
+  "apiToken": "Bearer <kickstand-service-token>",
+  "listenAddr": ":5027",
+  "bindings": {
+    "350123456789012": "bike_a1m1_belfast",
+    "350123456789013": "bike_a1m2_belfast"
+  }
+}

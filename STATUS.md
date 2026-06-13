@@ -3,7 +3,7 @@
 State-of-build snapshot. The plan in `motorbike-training-plan.md` stays the design
 source of truth; this doc tracks what's actually built and where to pick up.
 
-Last updated: 2026-06-12
+Last updated: 2026-06-13 (Teltonika Codec-8 adapter + GPS proximity validation)
 
 ---
 
@@ -402,11 +402,24 @@ These are deferred deliberately, not bugs:
   JSON + iOS/Android config files I can wire `firebase_messaging` in the client +
   the Go dispatcher. The in-app bell already works without it.
 - **Booking-scoped messaging / chat** — plan §8b phase 3 with safeguarding work
-- **GDPR data export / right-to-erasure flows** — plan §9 acknowledged
+- **GDPR data export / right-to-erasure flows** — _shipped 2026-06-12_:
+  - `GET /me/data-export` returns the caller's personal data as nested
+    JSON with a Content-Disposition header so the browser saves it. The
+    student-app avatar menu now has "Download my data" which calls this
+    endpoint and pops the native save dialog (file_picker.saveFile).
+  - `POST /admin/users/{id}/anonymise` scrubs PII on users + role
+    profile, sets account_status='disabled', stamps
+    `users.anonymised_at` (migration 0028), and disables the Firebase
+    Auth user. Bookings, charges, payments, audit log — preserved per
+    financial-retention obligations. Self-target refused (400).
+    Second call returns 409 already_anonymised. Admin student-detail
+    page has a "Danger zone · GDPR" card with confirm dialog.
 - **Audit trail UI — filter / search** — `audit_log` table records every
   authenticated mutation; admin sidebar surfaces `/admin/audit` with
-  role-coloured actor pills + entity-stripe rows. Filtering by entity / actor /
-  date range is on the wish-list; the read-only timeline is shipped.
+  role-coloured actor pills + entity-stripe rows. Filters _shipped
+  2026-06-12_: entity chips (existing), date-range presets (All / Today
+  / 7d / 30d / 90d + custom range picker), and tap-an-actor-name in
+  any row to pivot the timeline to that person (clearable via a chip).
 - **Firebase App Check** — deferred. Would gate every API request on an
   attestation token proving the call came from the real Flutter app /
   trusted browser. Best defence against signup-flood / scripted-API
@@ -421,8 +434,30 @@ These are deferred deliberately, not bugs:
   waiting on API keys (register at
   <https://register-for-mot-history-api.service.gov.uk/>).
 - **Stripe / online prepay** — plan phase 2
-- **GPS history** — schema has the nullable fields; live map view deferred to
-  phase 3
+- **GPS history** — _shipped 2026-06-12_: `bike_gps_fixes` table
+  (migration 0027), POST /bikes/{id}/gps writes snapshot + history row
+  in one tx, GET /bikes/{id}/gps/history returns recent fixes ordered
+  by `at DESC` with optional `since`/`limit` params. Live-map markers
+  open a card with a "Trail · N fixes over X min" line; the polyline +
+  small trail-dots render in the bike's live-status colour for the
+  last 24h when a marker is tapped. Seed fills in ~6 trail points per
+  bike at startup.
+- **GPS coord validation** — _tightened 2026-06-13_: `locations` table
+  now carries optional `lat`/`lng` (migration 0029). UpdateBikeGPS
+  refuses a fix more than 200km from every geocoded school site
+  (haversine in `internal/admin/bike_gps.go`). Skipped when no
+  location has coords yet (graceful degrade). Seed sets coords for
+  Belfast / Lisburn / Newry so the demo exercises the check.
+- **Teltonika Codec-8 adapter** — _shipped 2026-06-13_: standalone
+  `cmd/teltonika-adapter` binary (Makefile `make build` produces it).
+  TCP listener, IMEI handshake + bike binding lookup from
+  `config.example.json`, Codec-8 protocol decode in
+  `internal/teltonika`, forwards each GPS record as
+  `POST /bikes/{id}/gps` to the main API with a configured bearer
+  token. Round-trip + IMEI-rejection tests cover the protocol +
+  binding flows. One IMEI → one bike id; horizontal scale by running
+  multiple adapters. CRC verification deliberately deferred
+  (TCP-already-CRC'd; can add when a real device is on hand).
 - **Real production deploy** — no Cloud Run / Cloudflare Pages config yet
 - **Real user testing** — only API smoke + unit tests; UI testing is the next step
 - **Multi-role user** — a user can hold only one role today; plan acknowledged

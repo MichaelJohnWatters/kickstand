@@ -1570,6 +1570,21 @@ class BikeGPS {
       );
 }
 
+/// One historical GPS fix for a single bike, returned by
+/// /bikes/{id}/gps/history. Used to render the breadcrumb trail on
+/// the live-map screen.
+class GpsFix {
+  final DateTime at;
+  final double lat;
+  final double lng;
+  const GpsFix({required this.at, required this.lat, required this.lng});
+  factory GpsFix.fromJson(Map<String, dynamic> j) => GpsFix(
+        at: DateTime.parse(j['at'] as String).toUtc(),
+        lat: (j['lat'] as num).toDouble(),
+        lng: (j['lng'] as num).toDouble(),
+      );
+}
+
 // ----- Analytics -----
 
 /// One bike's utilisation row from /admin/analytics/bike-utilisation.

@@ -17,13 +17,36 @@ import '../widgets/empty_state.dart';
 
 class _Filter {
   final String entity;
-  final String actor;
-  const _Filter({this.entity = '', this.actor = ''});
-  _Filter copy({String? entity, String? actor}) => _Filter(
+  final String actor;       // userId for the API
+  final String actorName;   // display label for the chip
+  final DateTime? from;     // inclusive UTC lower bound (null = open)
+  final DateTime? to;       // exclusive UTC upper bound (null = open)
+  const _Filter({
+    this.entity = '',
+    this.actor = '',
+    this.actorName = '',
+    this.from,
+    this.to,
+  });
+  _Filter copy({
+    String? entity,
+    String? actor,
+    String? actorName,
+    Object? from = _unset,
+    Object? to = _unset,
+  }) => _Filter(
         entity: entity ?? this.entity,
         actor: actor ?? this.actor,
+        actorName: actorName ?? this.actorName,
+        from: identical(from, _unset) ? this.from : from as DateTime?,
+        to: identical(to, _unset) ? this.to : to as DateTime?,
       );
+
+  bool get isEmpty =>
+      entity.isEmpty && actor.isEmpty && from == null && to == null;
 }
+
+const _unset = Object();
 
 // Non-autoDispose so the audit page survives a tab switch with its
 // filter + paging intact (and silent-refreshes cached data via
@@ -38,6 +61,8 @@ final auditPageProvider = FutureProvider<AuditPage>((ref) async {
   return ref.read(apiClientProvider).listAudit(
         entity: f.entity.isEmpty ? null : f.entity,
         actor: f.actor.isEmpty ? null : f.actor,
+        from: f.from,
+        to: f.to,
         limit: _pageSize,
         offset: page * _pageSize,
       );
@@ -152,21 +177,147 @@ class _FilterBar extends StatelessWidget {
     ('disruptions', 'Disruptions'),
   ];
 
+  static const _ranges = <(int, String)>[
+    (0, 'All time'),
+    (1, 'Today'),
+    (7, 'Last 7 days'),
+    (30, 'Last 30 days'),
+    (90, 'Last 90 days'),
+  ];
+
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(children: [
-        for (final (key, label) in _entities)
-          Padding(
-            padding: const EdgeInsets.only(right: 6),
-            child: _Chip(
-              label: label,
-              selected: filter.entity == key,
-              onTap: () => onChanged(filter.copy(entity: key)),
+    final activeRangeDays = _activeRangeDays();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(children: [
+            for (final (key, label) in _entities)
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: _Chip(
+                  label: label,
+                  selected: filter.entity == key,
+                  onTap: () => onChanged(filter.copy(entity: key)),
+                ),
+              ),
+          ]),
+        ),
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(children: [
+            for (final (days, label) in _ranges)
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: _Chip(
+                  label: label,
+                  selected: activeRangeDays == days,
+                  onTap: () => onChanged(_applyRange(filter, days)),
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: _Chip(
+                label: activeRangeDays == -1
+                    ? _customRangeLabel(filter)
+                    : 'Custom…',
+                selected: activeRangeDays == -1,
+                onTap: () => _pickCustomRange(context),
+              ),
             ),
-          ),
-      ]),
+            if (filter.actor.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: _DismissibleChip(
+                  label: 'Actor: ${filter.actorName.isEmpty ? "Someone" : filter.actorName}',
+                  onClear: () => onChanged(filter.copy(actor: '', actorName: '')),
+                ),
+              ),
+          ]),
+        ),
+      ],
+    );
+  }
+
+  /// Returns 0 for "all time", N for an N-day window ending now, or -1
+  /// for a custom range. The math accepts a ±1 day fudge so a "Last 7
+  /// days" preset still highlights after the picker rounds to midnight.
+  int _activeRangeDays() {
+    if (filter.from == null && filter.to == null) return 0;
+    if (filter.from == null || filter.to == null) return -1;
+    final now = DateTime.now().toUtc();
+    if (now.difference(filter.to!).inMinutes.abs() > 60) return -1;
+    final span = filter.to!.difference(filter.from!).inDays;
+    for (final (days, _) in _ranges) {
+      if (days != 0 && (span - days).abs() <= 1) return days;
+    }
+    return -1;
+  }
+
+  _Filter _applyRange(_Filter f, int days) {
+    if (days == 0) return f.copy(from: null, to: null);
+    final now = DateTime.now().toUtc();
+    return f.copy(from: now.subtract(Duration(days: days)), to: now);
+  }
+
+  String _customRangeLabel(_Filter f) {
+    final fmt = DateFormat('d MMM');
+    final from = f.from == null ? '…' : fmt.format(f.from!);
+    final to = f.to == null ? '…' : fmt.format(f.to!);
+    return '$from – $to';
+  }
+
+  Future<void> _pickCustomRange(BuildContext context) async {
+    final now = DateTime.now();
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2024),
+      lastDate: now.add(const Duration(days: 1)),
+      initialDateRange: DateTimeRange(
+        start: filter.from?.toLocal() ?? now.subtract(const Duration(days: 30)),
+        end: filter.to?.toLocal() ?? now,
+      ),
+    );
+    if (picked != null) {
+      onChanged(filter.copy(
+        from: picked.start.toUtc(),
+        to: picked.end.toUtc(),
+      ));
+    }
+  }
+}
+
+/// Chip with a small ✕ that clears one bit of filter state.
+class _DismissibleChip extends StatelessWidget {
+  final String label;
+  final VoidCallback onClear;
+  const _DismissibleChip({required this.label, required this.onClear});
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onClear,
+      borderRadius: BorderRadius.circular(KsRadius.pill),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 6, 8, 6),
+        decoration: BoxDecoration(
+          color: KsColors.primaryTint,
+          borderRadius: BorderRadius.circular(KsRadius.pill),
+          border: Border.all(color: KsColors.primary.withValues(alpha: 0.4)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Text(label,
+              style: TextStyle(
+                color: KsColors.primaryDeep,
+                fontWeight: FontWeight.w700,
+                fontSize: 12.5,
+              )),
+          const SizedBox(width: 4),
+          const Icon(Icons.close, size: 14, color: KsColors.primaryDeep),
+        ]),
+      ),
     );
   }
 }
@@ -233,13 +384,13 @@ class _Col extends StatelessWidget {
           letterSpacing: 0.5));
 }
 
-class _EntryRow extends StatelessWidget {
+class _EntryRow extends ConsumerWidget {
   final AuditEntry entry;
   final bool last;
   const _EntryRow({required this.entry, required this.last});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final actor = entry.actorName.isEmpty ? 'Someone' : entry.actorName;
     final relative = _relativeAge(entry.at);
     final absolute = DateFormat('d MMM HH:mm').format(entry.at);
@@ -255,6 +406,18 @@ class _EntryRow extends StatelessWidget {
         ? const _Phrase('', '') // unused
         : _humanPhrase(entry);
     final visuals = _entityVisuals(entry.targetEntity);
+    // Tapping the actor name pivots the timeline to only that person.
+    // Disabled for unauthenticated rows (no user id to filter on).
+    final onActorTap = entry.actorUserId.isEmpty
+        ? null
+        : () {
+            final f = ref.read(_filterProvider);
+            ref.read(_filterProvider.notifier).state = f.copy(
+              actor: entry.actorUserId,
+              actorName: entry.actorName,
+            );
+            ref.read(_pageProvider.notifier).state = 0;
+          };
     return Container(
       decoration: BoxDecoration(
         border: Border(
@@ -292,6 +455,7 @@ class _EntryRow extends StatelessWidget {
                     role: entry.actorRole,
                     summary: entry.summary,
                     failed: !entry.succeeded,
+                    onActorTap: onActorTap,
                   )
                 else
                   _Sentence(
@@ -300,6 +464,7 @@ class _EntryRow extends StatelessWidget {
                     verb: phrase.verb,
                     target: phrase.target,
                     failed: !entry.succeeded,
+                    onActorTap: onActorTap,
                   ),
                 const SizedBox(height: 4),
                 // Subtitle: raw method+path (for power users). Hidden
@@ -344,11 +509,13 @@ class _SummarySentence extends StatelessWidget {
   final String role;
   final String summary;
   final bool failed;
+  final VoidCallback? onActorTap;
   const _SummarySentence({
     required this.actor,
     required this.role,
     required this.summary,
     required this.failed,
+    this.onActorTap,
   });
 
   @override
@@ -365,7 +532,10 @@ class _SummarySentence extends StatelessWidget {
         : summary[0].toLowerCase() + summary.substring(1);
     return RichText(
       text: TextSpan(style: base, children: [
-        TextSpan(text: actor, style: emphasised),
+        WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: _ActorTap(
+                actor: actor, style: emphasised, onTap: onActorTap)),
         const WidgetSpan(child: SizedBox(width: 6)),
         WidgetSpan(
             alignment: PlaceholderAlignment.middle,
@@ -386,12 +556,14 @@ class _Sentence extends StatelessWidget {
   final String verb;
   final String target;
   final bool failed;
+  final VoidCallback? onActorTap;
   const _Sentence({
     required this.actor,
     required this.role,
     required this.verb,
     required this.target,
     required this.failed,
+    this.onActorTap,
   });
 
   @override
@@ -402,7 +574,10 @@ class _Sentence extends StatelessWidget {
     final attempt = failed ? ' tried to ' : ' ';
     return RichText(
       text: TextSpan(style: base, children: [
-        TextSpan(text: actor, style: emphasised),
+        WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: _ActorTap(
+                actor: actor, style: emphasised, onTap: onActorTap)),
         const WidgetSpan(child: SizedBox(width: 6)),
         WidgetSpan(
             alignment: PlaceholderAlignment.middle,
@@ -414,6 +589,30 @@ class _Sentence extends StatelessWidget {
           TextSpan(text: target, style: emphasised),
         ],
       ]),
+    );
+  }
+}
+
+/// Actor name styled as a bold text run, tappable when `onTap` is
+/// non-null so the user can pivot the timeline to that person. The
+/// hit target is the text itself — no underline so it stays calm
+/// inside the sentence flow.
+class _ActorTap extends StatelessWidget {
+  final String actor;
+  final TextStyle style;
+  final VoidCallback? onTap;
+  const _ActorTap({required this.actor, required this.style, this.onTap});
+  @override
+  Widget build(BuildContext context) {
+    final text = Text(actor, style: style);
+    if (onTap == null) return text;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: text,
+      ),
     );
   }
 }
@@ -669,9 +868,9 @@ class _EmptyState extends StatelessWidget {
   const _EmptyState({required this.filter});
   @override
   Widget build(BuildContext context) {
-    final msg = filter.entity.isEmpty
+    final msg = filter.isEmpty
         ? 'No activity recorded yet.'
-        : 'No activity for ${filter.entity}.';
+        : 'No activity matches the current filters.';
     return Container(
       padding: const EdgeInsets.all(40),
       decoration: BoxDecoration(

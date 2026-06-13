@@ -3,6 +3,7 @@
 build:
 	go build -o bin/server ./cmd/server
 	go build -o bin/seed ./cmd/seed
+	go build -o bin/teltonika-adapter ./cmd/teltonika-adapter
 
 # Full test suite — every httpapi test goes through the Firebase Auth
 # emulator (Phase 1 of firebase-auth-migration.md). Receipt round-trip
