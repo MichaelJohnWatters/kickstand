@@ -80,6 +80,19 @@ final bikeGpsProvider = FutureProvider.autoDispose<List<BikeGPS>>((ref) async {
   return ref.read(apiClientProvider).listBikeGPS();
 });
 
+/// Per-bike GPS breadcrumb trail. Auto-disposed and family-keyed by
+/// bike id so each selected bike fetches independently and clears
+/// when the user closes the detail card.
+final bikeGpsHistoryProvider =
+    FutureProvider.autoDispose.family<List<GpsFix>, String>((ref, bikeId) {
+  // Last 24h is enough to read recent movements without paging.
+  final since = DateTime.now().toUtc().subtract(const Duration(hours: 24));
+  return ref.read(apiClientProvider).listBikeGPSHistory(
+        bikeId: bikeId,
+        since: since,
+      );
+});
+
 /// Analytics window state — drives all three sections on the
 /// /admin/analytics page. Single source of truth so the numbers
 /// across cards always agree.

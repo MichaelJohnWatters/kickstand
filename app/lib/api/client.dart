@@ -939,6 +939,39 @@ class ApiClient {
     await _send('POST', '/bikes/$bikeId/gps', data: {'lat': lat, 'lng': lng});
   }
 
+  /// GET /bikes/{id}/gps/history — recent fixes for the breadcrumb
+  /// trail shown when a bike marker is tapped on the live map.
+  Future<List<GpsFix>> listBikeGPSHistory({
+    required String bikeId,
+    DateTime? since,
+    int limit = 200,
+  }) async {
+    final params = <String, dynamic>{'limit': limit.toString()};
+    if (since != null) params['since'] = since.toUtc().toIso8601String();
+    final res = await _send('GET', '/bikes/$bikeId/gps/history', query: params);
+    return ((res.data as Map<String, dynamic>)['fixes'] as List? ?? const [])
+        .map((e) => GpsFix.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  // ----- GDPR / privacy -----
+
+  /// GET /me/data-export — caller's own personal data, returned as a
+  /// nested JSON map. The caller is responsible for serialising it
+  /// to a file the user can save.
+  Future<Map<String, dynamic>> myDataExport() async {
+    final res = await _send('GET', '/me/data-export');
+    return res.data as Map<String, dynamic>;
+  }
+
+  /// POST /admin/users/{id}/anonymise — admin/owner only. Scrubs PII
+  /// on the target user + disables the Firebase Auth user.
+  /// Idempotent at the API level: a second call surfaces a 409 via
+  /// ApiException with code `already_anonymised`.
+  Future<void> anonymiseUser({required String userId}) async {
+    await _send('POST', '/admin/users/$userId/anonymise');
+  }
+
   // ----- Admin: analytics -----
 
   /// GET /admin/analytics/bike-utilisation?from=&to=

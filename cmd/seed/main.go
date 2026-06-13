@@ -336,17 +336,24 @@ func seedLaganValley(
 			for _, l := range []struct {
 				id, name, addr string
 				hue            int
+				lat, lng       float64
 			}{
-				{locBelfast, "Belfast", "Boucher Crescent, Belfast BT12 6HU", 215},
-				{locLisburn, "Lisburn", "Knockmore Industrial Estate, Lisburn BT28 2EX", 145},
-				{locNewry, "Newry", "Greenbank Industrial Estate, Newry BT34 2QU", 25},
+				{locBelfast, "Belfast", "Boucher Crescent, Belfast BT12 6HU", 215, 54.5825, -5.9655},
+				{locLisburn, "Lisburn", "Knockmore Industrial Estate, Lisburn BT28 2EX", 145, 54.5188, -6.0640},
+				{locNewry, "Newry", "Greenbank Industrial Estate, Newry BT34 2QU", 25, 54.1750, -6.3380},
 			} {
 				banner, err := makeLocationBanner(l.hue)
 				if err != nil {
 					return fmt.Errorf("location banner %s: %w", l.id, err)
 				}
-				if err := exec(`INSERT OR IGNORE INTO locations (id, school_id, name, address, image, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-					l.id, schoolID, l.name, l.addr, banner, createdAt); err != nil {
+				if err := exec(`INSERT OR IGNORE INTO locations (id, school_id, name, address, image, lat, lng, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+					l.id, schoolID, l.name, l.addr, banner, l.lat, l.lng, createdAt); err != nil {
+					return err
+				}
+				// Backfill lat/lng for runs that pre-date migration 0029
+				// (INSERT OR IGNORE above skips when the row already exists).
+				if err := exec(`UPDATE locations SET lat = ?, lng = ? WHERE id = ? AND school_id = ?`,
+					l.lat, l.lng, l.id, schoolID); err != nil {
 					return err
 				}
 				if err := audit(10, "POST", "/locations", "locations", l.id,
@@ -615,6 +622,32 @@ func seedLaganValley(
 				if err := audit(50, "POST", "/bikes", "bikes", b.id,
 					fmt.Sprintf("Added bike %s (%s)", bikeName, b.cat), 201); err != nil {
 					return err
+				}
+				// Breadcrumb trail — six fixes walking outward from the
+				// centroid over the last hour, so the live map shows a
+				// short polyline when the operator taps the marker.
+				// Skipped for the "no signal" bike that intentionally has
+				// no snapshot, and for any bike without a centroid.
+				if b.id == bikeAManual1 {
+					continue
+				}
+				base, ok := siteCoords[b.current]
+				if !ok {
+					continue
+				}
+				headLat, headLng := jitter(b.id, base[0], base[1])
+				for i := 1; i <= 6; i++ {
+					trailAt := now.UTC().Add(-time.Duration(i*10) * time.Minute).Format(time.RFC3339)
+					// ~50–100 m steps in a deterministic direction per bike.
+					trailLat := headLat + float64(i)*0.0005
+					trailLng := headLng - float64(i)*0.0007
+					trailID := fmt.Sprintf("gpsfix_%s_%d", b.id, i)
+					if err := exec(`INSERT OR IGNORE INTO bike_gps_fixes
+						(id, school_id, bike_id, at, lat, lng)
+						VALUES (?, ?, ?, ?, ?, ?)`,
+						trailID, schoolID, b.id, trailAt, trailLat, trailLng); err != nil {
+						return err
+					}
 				}
 			}
 			return nil

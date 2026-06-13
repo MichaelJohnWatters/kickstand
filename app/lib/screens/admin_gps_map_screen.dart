@@ -60,21 +60,37 @@ class AdminGpsMapScreen extends ConsumerWidget {
   }
 }
 
-class _MapBody extends StatefulWidget {
+class _MapBody extends ConsumerStatefulWidget {
   final List<BikeGPS> bikes;
   const _MapBody({required this.bikes});
 
   @override
-  State<_MapBody> createState() => _MapBodyState();
+  ConsumerState<_MapBody> createState() => _MapBodyState();
 }
 
-class _MapBodyState extends State<_MapBody> {
+class _MapBodyState extends ConsumerState<_MapBody> {
   BikeGPS? _selected;
 
   @override
   Widget build(BuildContext context) {
     final tracked = widget.bikes.where((b) => b.hasFix).toList();
     final noSignal = widget.bikes.where((b) => !b.hasFix).toList();
+    // Trail for the currently-selected bike (last 24h). We render the
+    // polyline only when the user has tapped a marker so the map stays
+    // calm for at-a-glance scanning. Live snapshot is always the head
+    // of the trail — the polyline connects through the historical fixes.
+    final trailAsync = _selected == null
+        ? null
+        : ref.watch(bikeGpsHistoryProvider(_selected!.id));
+    final trailPoints = <LatLng>[];
+    if (_selected != null && trailAsync != null) {
+      // Head: current snapshot from the live list (newest).
+      trailPoints.add(LatLng(_selected!.lat!, _selected!.lng!));
+      // Tail: historical fixes ordered newest → oldest by the API.
+      for (final f in trailAsync.valueOrNull ?? const <GpsFix>[]) {
+        trailPoints.add(LatLng(f.lat, f.lng));
+      }
+    }
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
       child: DecoratedBox(
@@ -100,6 +116,31 @@ class _MapBodyState extends State<_MapBody> {
                   userAgentPackageName: 'kickstand.app',
                   maxNativeZoom: 19,
                 ),
+                if (trailPoints.length >= 2)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: trailPoints,
+                        color: _liveStatusColour(_selected!.liveStatus)
+                            .withValues(alpha: 0.65),
+                        strokeWidth: 3,
+                      ),
+                    ],
+                  ),
+                if (_selected != null && trailAsync != null)
+                  MarkerLayer(
+                    markers: [
+                      for (final f in trailAsync.valueOrNull ?? const <GpsFix>[])
+                        Marker(
+                          point: LatLng(f.lat, f.lng),
+                          width: 10,
+                          height: 10,
+                          child: _TrailDot(
+                              colour:
+                                  _liveStatusColour(_selected!.liveStatus)),
+                        ),
+                    ],
+                  ),
                 MarkerLayer(
                   markers: [
                     for (final b in tracked)
@@ -133,11 +174,28 @@ class _MapBodyState extends State<_MapBody> {
                 right: 16,
                 child: _SelectedBikeCard(
                   bike: _selected!,
+                  trail: trailAsync,
                   onClose: () => setState(() => _selected = null),
                 ),
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Tiny solid dot for each historical fix on the trail.
+class _TrailDot extends StatelessWidget {
+  final Color colour;
+  const _TrailDot({required this.colour});
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colour,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 1.5),
       ),
     );
   }
@@ -224,8 +282,13 @@ class _NoSignalPanel extends StatelessWidget {
 
 class _SelectedBikeCard extends StatelessWidget {
   final BikeGPS bike;
+  final AsyncValue<List<GpsFix>>? trail;
   final VoidCallback onClose;
-  const _SelectedBikeCard({required this.bike, required this.onClose});
+  const _SelectedBikeCard({
+    required this.bike,
+    required this.trail,
+    required this.onClose,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -300,9 +363,50 @@ class _SelectedBikeCard extends StatelessWidget {
               style: const TextStyle(color: KsColors.ink2, fontSize: 12),
             ),
           ]),
+          const SizedBox(height: 6),
+          _TrailLine(trail: trail),
         ],
       ),
     );
+  }
+}
+
+/// One-line summary of the breadcrumb trail in the selected-bike card
+/// — loading spinner / "N fixes (last 24h)" / "No prior fixes" / error.
+class _TrailLine extends StatelessWidget {
+  final AsyncValue<List<GpsFix>>? trail;
+  const _TrailLine({required this.trail});
+  @override
+  Widget build(BuildContext context) {
+    final t = trail;
+    if (t == null) return const SizedBox.shrink();
+    return Row(children: [
+      const Icon(Icons.timeline, size: 14, color: KsColors.ink3),
+      const SizedBox(width: 4),
+      Expanded(
+        child: t.when(
+          loading: () => const Text('Loading trail…',
+              style: TextStyle(color: KsColors.ink3, fontSize: 12)),
+          error: (e, _) => const Text('Couldn’t load trail',
+              style: TextStyle(color: KsColors.danger, fontSize: 12)),
+          data: (fixes) {
+            if (fixes.isEmpty) {
+              return const Text('No prior fixes in the last 24h',
+                  style: TextStyle(color: KsColors.ink3, fontSize: 12));
+            }
+            final oldest = fixes.last.at;
+            final delta = DateTime.now().toUtc().difference(oldest);
+            final spanLabel = delta.inHours >= 1
+                ? '${delta.inHours} h'
+                : '${delta.inMinutes} min';
+            return Text(
+              'Trail · ${fixes.length} fixes over $spanLabel',
+              style: const TextStyle(color: KsColors.ink2, fontSize: 12),
+            );
+          },
+        ),
+      ),
+    ]);
   }
 }
 

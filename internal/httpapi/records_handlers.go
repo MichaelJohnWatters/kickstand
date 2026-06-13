@@ -322,6 +322,7 @@ func (s *Server) handleGetStudentDetail(w http.ResponseWriter, r *http.Request) 
 	// Basics
 	const userQ = `
 		SELECT u.id, u.name, u.email, COALESCE(u.phone, ''), u.account_status,
+		       COALESCE(u.anonymised_at, ''),
 		       COALESCE(sp.transmission_preference, ''),
 		       COALESCE(sp.licence_category_pursued, ''),
 		       COALESCE(sp.rider_date_of_birth, ''),
@@ -335,12 +336,12 @@ func (s *Server) handleGetStudentDetail(w http.ResponseWriter, r *http.Request) 
 		WHERE u.id = ? AND u.school_id = ? AND u.role = 'student'
 	`
 	var (
-		userID, name, email, phone, status, transmission, lic, dob string
-		cbtHeld, theoryPassed                                       int
-		cbtVariant, cbtExpires, theoryOn                            string
+		userID, name, email, phone, status, anonymisedAt, transmission, lic, dob string
+		cbtHeld, theoryPassed                                                     int
+		cbtVariant, cbtExpires, theoryOn                                          string
 	)
 	err := s.DB.QueryRowContext(r.Context(), userQ, string(studentID), string(scope.SchoolID())).Scan(
-		&userID, &name, &email, &phone, &status,
+		&userID, &name, &email, &phone, &status, &anonymisedAt,
 		&transmission, &lic, &dob,
 		&cbtHeld, &cbtVariant, &cbtExpires, &theoryPassed, &theoryOn,
 	)
@@ -427,6 +428,7 @@ func (s *Server) handleGetStudentDetail(w http.ResponseWriter, r *http.Request) 
 			"email":                  email,
 			"phone":                  phone,
 			"accountStatus":          status,
+			"anonymisedAt":           anonymisedAt,
 			"transmissionPreference": transmission,
 			"licenceCategoryPursued": lic,
 			"dateOfBirth":            dob,

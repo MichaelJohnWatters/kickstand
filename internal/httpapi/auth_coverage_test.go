@@ -143,6 +143,8 @@ var adminOnlyRoutes = []struct{ method, pattern string }{
 	{"GET", "/signups/rejected"},
 	{"GET", "/signups/approved"},
 	{"GET", "/audit"},
+	{"GET", "/bikes/x/gps/history"},
+	{"POST", "/admin/users/x/anonymise"},
 	{"GET", "/compliance"},
 	{"PUT", "/school/insurance"},
 	{"GET", "/revenue"},
