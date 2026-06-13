@@ -648,17 +648,24 @@ class LocationLite {
   final String name;
   final String address;
   final Uint8List imageBytes;
+  final double? lat;
+  final double? lng;
   LocationLite({
     required this.id,
     required this.name,
     required this.address,
     required this.imageBytes,
+    this.lat,
+    this.lng,
   });
+  bool get hasCoords => lat != null && lng != null;
   factory LocationLite.fromJson(Map<String, dynamic> j) => LocationLite(
         id: j['ID'] ?? j['id'] ?? '',
         name: j['Name'] ?? j['name'] ?? '',
         address: j['Address'] ?? j['address'] ?? '',
         imageBytes: _decodeThumb(j['image'] ?? j['Image']),
+        lat: (j['lat'] as num?)?.toDouble(),
+        lng: (j['lng'] as num?)?.toDouble(),
       );
 }
 
