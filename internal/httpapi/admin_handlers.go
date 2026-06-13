@@ -64,6 +64,12 @@ func (s *Server) handleListLocations(w http.ResponseWriter, r *http.Request) {
 			"name":    l.Name,
 			"address": l.Address,
 		}
+		if l.Lat != nil {
+			row["lat"] = *l.Lat
+		}
+		if l.Lng != nil {
+			row["lng"] = *l.Lng
+		}
 		if len(l.Image) > 0 {
 			row["image"] = base64.StdEncoding.EncodeToString(l.Image)
 		}

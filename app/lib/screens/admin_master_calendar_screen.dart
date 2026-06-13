@@ -1652,7 +1652,20 @@ class _BlockBody extends StatelessWidget {
     final hasInstructor = instructorLabel.isNotEmpty;
     final students =
         ((session['students'] as List?) ?? const []).cast<Map<String, dynamic>>();
-    return Column(
+    // Short sessions at moderate zoom can push the content past the
+    // block's clipped height. The outer ClipPath already hides the
+    // visual overflow; this LayoutBuilder + OverflowBox stops Flutter
+    // logging a RenderFlex overflow on the way through. Anything that
+    // doesn't fit is silently trimmed at the bottom — the block is a
+    // glanceable summary, not the source of truth.
+    return LayoutBuilder(builder: (ctx, c) => ClipRect(
+      child: OverflowBox(
+        alignment: Alignment.topLeft,
+        minWidth: c.maxWidth,
+        maxWidth: c.maxWidth,
+        minHeight: 0,
+        maxHeight: double.infinity,
+        child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1748,7 +1761,9 @@ class _BlockBody extends StatelessWidget {
                     fontWeight: FontWeight.w800)),
           ),
       ],
-    );
+        ),
+      ),
+    ));
   }
 
   /// Render one student name with a leading status glyph: ⚠ in

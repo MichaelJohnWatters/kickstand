@@ -83,6 +83,11 @@ class AdminShell extends ConsumerStatefulWidget {
 
 class _AdminShellState extends ConsumerState<AdminShell> {
   String? _lastRoute;
+  // Sidebar starts expanded. The wide-screen layout below flips
+  // between a 256px labelled sidebar and a 64px icon-only rail.
+  // In-memory only — the user re-collapses on the next session if
+  // they want; persistence isn't worth a shared_prefs round-trip.
+  bool _sidebarCollapsed = false;
 
   String _activeRoute(BuildContext context) {
     final loc = GoRouterState.of(context).matchedLocation;
@@ -120,7 +125,15 @@ class _AdminShellState extends ConsumerState<AdminShell> {
         body: SelectionArea(
           child: Row(
             children: [
-              const SizedBox(width: 256, child: _Sidebar(inDrawer: false)),
+              SizedBox(
+                width: _sidebarCollapsed ? 64 : 256,
+                child: _Sidebar(
+                  inDrawer: false,
+                  collapsed: _sidebarCollapsed,
+                  onToggle: () => setState(
+                      () => _sidebarCollapsed = !_sidebarCollapsed),
+                ),
+              ),
               Expanded(
                 child: Column(
                   children: [
@@ -146,7 +159,9 @@ class _AdminShellState extends ConsumerState<AdminShell> {
       ),
       drawer: const Drawer(
         backgroundColor: KsColors.surface,
-        child: _Sidebar(inDrawer: true),
+        // Drawer is always full-width — the collapsed rail only makes
+        // sense at desktop sizes.
+        child: _Sidebar(inDrawer: true, collapsed: false, onToggle: null),
       ),
       body: SelectionArea(
         child: Column(
@@ -171,7 +186,17 @@ class _AdminShellState extends ConsumerState<AdminShell> {
 
 class _Sidebar extends ConsumerWidget {
   final bool inDrawer;
-  const _Sidebar({required this.inDrawer});
+  // collapsed: render as a 64px icon-only rail. onToggle: callback the
+  // chevron button calls to flip back. The drawer never collapses
+  // (drawer is mobile-only and already off-canvas), so onToggle is
+  // nullable for that case.
+  final bool collapsed;
+  final VoidCallback? onToggle;
+  const _Sidebar({
+    required this.inDrawer,
+    required this.collapsed,
+    required this.onToggle,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -227,10 +252,16 @@ class _Sidebar extends ConsumerWidget {
       ),
       child: Column(
         children: [
-          // School header
+          // School header — the logo stays; school name and the
+          // collapse/expand chevron are conditional on the form.
           Container(
-            padding: const EdgeInsets.fromLTRB(16, 18, 16, 14),
+            padding: collapsed
+                ? const EdgeInsets.fromLTRB(0, 18, 0, 14)
+                : const EdgeInsets.fromLTRB(16, 18, 8, 14),
             child: Row(
+              mainAxisAlignment: collapsed
+                  ? MainAxisAlignment.center
+                  : MainAxisAlignment.start,
               children: [
                 Container(
                   width: 36, height: 36,
@@ -240,24 +271,39 @@ class _Sidebar extends ConsumerWidget {
                   ),
                   child: const Icon(Icons.two_wheeler, color: Colors.white, size: 20),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        settings?.name ?? 'Kickstand',
-                        style: GoogleFonts.plusJakartaSans(
-                            fontWeight: FontWeight.w800, color: KsColors.ink, fontSize: 14, letterSpacing: -0.3),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      Text(
-                        settings == null ? '' : '${settings.region} · ${settings.testBodyLabel}',
-                        style: const TextStyle(color: KsColors.ink3, fontSize: 11),
-                      ),
-                    ],
+                if (!collapsed) ...[
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          settings?.name ?? 'Kickstand',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontWeight: FontWeight.w800, color: KsColors.ink, fontSize: 14, letterSpacing: -0.3),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Text(
+                          settings == null ? '' : '${settings.region} · ${settings.testBodyLabel}',
+                          style: const TextStyle(color: KsColors.ink3, fontSize: 11),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
+                  if (onToggle != null)
+                    Tooltip(
+                      message: 'Collapse sidebar',
+                      child: InkWell(
+                        onTap: onToggle,
+                        borderRadius: BorderRadius.circular(20),
+                        child: const Padding(
+                          padding: EdgeInsets.all(6),
+                          child: Icon(Icons.chevron_left,
+                              size: 18, color: KsColors.ink3),
+                        ),
+                      ),
+                    ),
+                ],
               ],
             ),
           ),
@@ -266,7 +312,9 @@ class _Sidebar extends ConsumerWidget {
           // Nav
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+              padding: collapsed
+                  ? const EdgeInsets.symmetric(vertical: 8, horizontal: 6)
+                  : const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
               children: [
                 for (final item in _navItems)
                   _NavTile(
@@ -274,51 +322,90 @@ class _Sidebar extends ConsumerWidget {
                     active: loc.startsWith(item.route) &&
                         (item.route == '/admin' ? loc == '/admin' : true),
                     badge: countFor(item.badgeSource),
+                    collapsed: collapsed,
                     onTap: () {
                       if (inDrawer) Navigator.of(context).pop();
                       context.go(item.route);
                     },
                   ),
+                if (collapsed && onToggle != null) ...[
+                  const SizedBox(height: 8),
+                  Tooltip(
+                    message: 'Expand sidebar',
+                    child: InkWell(
+                      onTap: onToggle,
+                      borderRadius: BorderRadius.circular(KsRadius.sm),
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(vertical: 2),
+                        padding: const EdgeInsets.symmetric(vertical: 9),
+                        alignment: Alignment.center,
+                        child: const Icon(Icons.chevron_right,
+                            size: 18, color: KsColors.ink3),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
 
-          // User card
+          // User card — in collapsed mode just the avatar + sign-out
+          // icon stacked vertically; full row otherwise.
           Container(
             decoration: const BoxDecoration(
               border: Border(top: BorderSide(color: KsColors.border)),
             ),
-            padding: const EdgeInsets.all(12),
-            child: Row(children: [
-              Container(
-                width: 32, height: 32,
-                decoration: BoxDecoration(
-                  color: KsColors.primaryTint,
-                  borderRadius: BorderRadius.circular(KsRadius.pill),
-                ),
-                child: const Icon(Icons.person, color: KsColors.primaryDeep, size: 18),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(identity?.name ?? '',
-                        style: GoogleFonts.plusJakartaSans(
-                            fontWeight: FontWeight.w700, color: KsColors.ink, fontSize: 13)),
-                    Text(_roleLabel(identity?.role ?? ''),
-                        style: const TextStyle(color: KsColors.ink3, fontSize: 11)),
-                  ],
-                ),
-              ),
-              IconButton(
-                tooltip: 'Sign out',
-                onPressed: () async {
-                  await ref.read(authControllerProvider.notifier).logout();
-                },
-                icon: const Icon(Icons.logout, size: 18, color: KsColors.ink3),
-              ),
-            ]),
+            padding: collapsed
+                ? const EdgeInsets.symmetric(vertical: 10)
+                : const EdgeInsets.all(12),
+            child: collapsed
+                ? Column(children: [
+                    Container(
+                      width: 32, height: 32,
+                      decoration: BoxDecoration(
+                        color: KsColors.primaryTint,
+                        borderRadius: BorderRadius.circular(KsRadius.pill),
+                      ),
+                      child: const Icon(Icons.person, color: KsColors.primaryDeep, size: 18),
+                    ),
+                    IconButton(
+                      tooltip: 'Sign out',
+                      onPressed: () async {
+                        await ref.read(authControllerProvider.notifier).logout();
+                      },
+                      icon: const Icon(Icons.logout, size: 18, color: KsColors.ink3),
+                    ),
+                  ])
+                : Row(children: [
+                    Container(
+                      width: 32, height: 32,
+                      decoration: BoxDecoration(
+                        color: KsColors.primaryTint,
+                        borderRadius: BorderRadius.circular(KsRadius.pill),
+                      ),
+                      child: const Icon(Icons.person, color: KsColors.primaryDeep, size: 18),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(identity?.name ?? '',
+                              style: GoogleFonts.plusJakartaSans(
+                                  fontWeight: FontWeight.w700, color: KsColors.ink, fontSize: 13)),
+                          Text(_roleLabel(identity?.role ?? ''),
+                              style: const TextStyle(color: KsColors.ink3, fontSize: 11)),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Sign out',
+                      onPressed: () async {
+                        await ref.read(authControllerProvider.notifier).logout();
+                      },
+                      icon: const Icon(Icons.logout, size: 18, color: KsColors.ink3),
+                    ),
+                  ]),
           ),
         ],
       ),
@@ -341,16 +428,62 @@ class _NavTile extends StatelessWidget {
   final _NavItem item;
   final bool active;
   final int badge;
+  final bool collapsed;
   final VoidCallback onTap;
   const _NavTile({
     required this.item,
     required this.active,
     required this.badge,
+    required this.collapsed,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    if (collapsed) {
+      // Icon-only rail form. The badge becomes a small dot in the top-
+      // right corner so the manager still notices new sign-ups etc.
+      // Tooltip surfaces the label on hover.
+      return Tooltip(
+        message: badge > 0 ? '${item.label}  ($badge)' : item.label,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(KsRadius.sm),
+          child: Container(
+            margin: const EdgeInsets.symmetric(vertical: 2),
+            padding: const EdgeInsets.symmetric(vertical: 11),
+            decoration: BoxDecoration(
+              color: active ? KsColors.primaryTint : Colors.transparent,
+              borderRadius: BorderRadius.circular(KsRadius.sm),
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              clipBehavior: Clip.none,
+              children: [
+                Icon(item.icon,
+                    size: 20,
+                    color: active ? KsColors.primaryDeep : KsColors.ink2),
+                if (badge > 0)
+                  Positioned(
+                    top: -2,
+                    right: 8,
+                    child: Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: _badgeColour(item.badgeSource),
+                        shape: BoxShape.circle,
+                        border:
+                            Border.all(color: KsColors.surface, width: 1.5),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(KsRadius.sm),

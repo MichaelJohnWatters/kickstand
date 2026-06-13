@@ -135,13 +135,16 @@ GoRouter buildRouter(Ref ref) {
     },
     routes: [
       GoRoute(path: '/splash', builder: (_, __) => const SplashScreen()),
+      // Auth flow uses NoTransitionPage — the Material default fade is
+      // ~300ms which reads as "lag" when tapping the welcome screen's
+      // "I already have an account" button. Same fix as the tab routes.
       GoRoute(
           path: '/welcome',
-          builder: (_, __) => kDemoMode
+          pageBuilder: (_, __) => _instant(kDemoMode
               ? const DemoRolePickerScreen()
-              : const WelcomeScreen()),
-      GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
-      GoRoute(path: '/signup', builder: (_, __) => const SignupScreen()),
+              : const WelcomeScreen())),
+      GoRoute(path: '/login', pageBuilder: (_, __) => _instant(const LoginScreen())),
+      GoRoute(path: '/signup', pageBuilder: (_, __) => _instant(const SignupScreen())),
 
       // Shared between roles.
       GoRoute(path: '/notifications', builder: (_, __) => const NotificationsScreen()),

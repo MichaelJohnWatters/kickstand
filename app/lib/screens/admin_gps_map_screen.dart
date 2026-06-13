@@ -70,6 +70,30 @@ class _MapBody extends ConsumerStatefulWidget {
 
 class _MapBodyState extends ConsumerState<_MapBody> {
   BikeGPS? _selected;
+  // MapController lets us drive zoom/pan programmatically — the
+  // +/- buttons, jump-to-location chips, and the sidebar bike list
+  // all call into this.
+  final _mapController = MapController();
+  // Sidebar starts open on wide screens (≥1100 px), closed on
+  // narrow ones so the map gets the room. The user can flip it
+  // either way from the toggle button.
+  bool _sidebarOpen = true;
+
+  @override
+  void dispose() {
+    _mapController.dispose();
+    super.dispose();
+  }
+
+  /// Selects a bike and flies the camera to its current fix at
+  /// zoom 15 (~street detail). Shared between marker taps and
+  /// sidebar row taps.
+  void _selectAndFly(BikeGPS b) {
+    setState(() => _selected = b);
+    if (b.hasFix) {
+      _mapController.move(LatLng(b.lat!, b.lng!), 15);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -98,9 +122,21 @@ class _MapBodyState extends ConsumerState<_MapBody> {
           border: Border.all(color: KsColors.border),
           borderRadius: BorderRadius.circular(16),
         ),
-        child: Stack(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_sidebarOpen)
+              _FleetSidebar(
+                bikes: widget.bikes,
+                selectedId: _selected?.id,
+                onSelect: _selectAndFly,
+                onClose: () => setState(() => _sidebarOpen = false),
+              ),
+            Expanded(
+              child: Stack(
           children: [
             FlutterMap(
+              mapController: _mapController,
               options: const MapOptions(
                 initialCenter: AdminGpsMapScreen._niCentre,
                 initialZoom: 9,
@@ -150,7 +186,7 @@ class _MapBodyState extends ConsumerState<_MapBody> {
                         height: 36,
                         child: _BikeMarker(
                           bike: b,
-                          onTap: () => setState(() => _selected = b),
+                          onTap: () => _selectAndFly(b),
                         ),
                       ),
                   ],
@@ -178,6 +214,51 @@ class _MapBodyState extends ConsumerState<_MapBody> {
                   onClose: () => setState(() => _selected = null),
                 ),
               ),
+            // Zoom +/- + reset controls in the bottom-right. Sit
+            // separate from the OSM attribution which docks bottom-
+            // left of the FlutterMap by default.
+            Positioned(
+              right: 16,
+              bottom: 16,
+              child: _MapControls(
+                onZoomIn: () => _mapController.move(
+                    _mapController.camera.center,
+                    (_mapController.camera.zoom + 1).clamp(6, 18)),
+                onZoomOut: () => _mapController.move(
+                    _mapController.camera.center,
+                    (_mapController.camera.zoom - 1).clamp(6, 18)),
+                onReset: () => _mapController.move(
+                    AdminGpsMapScreen._niCentre, 9),
+              ),
+            ),
+            // Jump-to-location chips. Pulls every geocoded site from
+            // /locations and flies the camera there on tap. Hidden
+            // when no site has coords yet (graceful degrade).
+            Positioned(
+              left: 16,
+              top: 16,
+              child: _JumpToLocationBar(
+                onJump: (lat, lng) =>
+                    _mapController.move(LatLng(lat, lng), 13),
+              ),
+            ),
+            // Reopen-sidebar tab — only visible when the sidebar is
+            // collapsed. Sits flush against the left edge so it
+            // reads as "pull the panel back out."
+            if (!_sidebarOpen)
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: _SidebarReopenTab(
+                    onOpen: () => setState(() => _sidebarOpen = true),
+                  ),
+                ),
+              ),
+          ],
+              ),
+            ),
           ],
         ),
       ),
@@ -230,6 +311,398 @@ class _BikeMarker extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Stacked +/-/reset buttons in the bottom-right of the map.
+/// `onReset` re-centres the map on the NI centroid at zoom 9, the
+/// initial state. Keyboard-accessible too — Material's InkWell + the
+/// Tooltip make it obvious what each button does.
+class _MapControls extends StatelessWidget {
+  final VoidCallback onZoomIn;
+  final VoidCallback onZoomOut;
+  final VoidCallback onReset;
+  const _MapControls({
+    required this.onZoomIn,
+    required this.onZoomOut,
+    required this.onReset,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: KsColors.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: KsColors.border),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x22000000),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _ControlButton(
+              icon: Icons.add, tooltip: 'Zoom in', onTap: onZoomIn),
+          const Divider(height: 1, color: KsColors.border),
+          _ControlButton(
+              icon: Icons.remove, tooltip: 'Zoom out', onTap: onZoomOut),
+          const Divider(height: 1, color: KsColors.border),
+          _ControlButton(
+              icon: Icons.center_focus_strong_outlined,
+              tooltip: 'Reset view',
+              onTap: onReset),
+        ],
+      ),
+    );
+  }
+}
+
+class _ControlButton extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+  const _ControlButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          width: 40,
+          height: 40,
+          child: Icon(icon, size: 20, color: KsColors.ink2),
+        ),
+      ),
+    );
+  }
+}
+
+/// Row of chips along the top-left of the map — one per geocoded
+/// site. Tapping a chip flies the camera to that site at zoom 13
+/// (~city-block detail). Watches `locationsProvider` and filters to
+/// rows with coords; renders nothing when no site has coords yet.
+class _JumpToLocationBar extends ConsumerWidget {
+  final void Function(double lat, double lng) onJump;
+  const _JumpToLocationBar({required this.onJump});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final locs = ref.watch(locationsProvider).valueOrNull ?? const [];
+    final geocoded = locs.where((l) => l.hasCoords).toList();
+    if (geocoded.isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+      decoration: BoxDecoration(
+        color: KsColors.surface,
+        borderRadius: BorderRadius.circular(KsRadius.pill),
+        border: Border.all(color: KsColors.border),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x22000000),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 8),
+          child:
+              Icon(Icons.place_outlined, size: 16, color: KsColors.ink3),
+        ),
+        for (final l in geocoded)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 3),
+            child: InkWell(
+              onTap: () => onJump(l.lat!, l.lng!),
+              borderRadius: BorderRadius.circular(KsRadius.pill),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: KsColors.surface2,
+                  borderRadius: BorderRadius.circular(KsRadius.pill),
+                  border: Border.all(color: KsColors.border),
+                ),
+                child: Text(
+                  l.name,
+                  style: const TextStyle(
+                    color: KsColors.ink2,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ]),
+    );
+  }
+}
+
+/// Fleet sidebar: a scrollable list of every bike, grouped by live
+/// status. Tap a row → fly camera to the bike + open its detail card.
+/// "No signal" bikes are listed but greyed out — no jump-to since we
+/// don't know where they are.
+class _FleetSidebar extends StatelessWidget {
+  final List<BikeGPS> bikes;
+  final String? selectedId;
+  final void Function(BikeGPS) onSelect;
+  final VoidCallback onClose;
+  const _FleetSidebar({
+    required this.bikes,
+    required this.selectedId,
+    required this.onSelect,
+    required this.onClose,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Group by live status, then alphabetise within group. The
+    // visible order is in-session first (managers care most), then
+    // available (ready to dispatch), then attention/offline, then
+    // no-signal at the bottom.
+    final groups = <(String, String, List<BikeGPS>)>[
+      ('in_session', 'In session', _filter(bikes, 'in_session', true)),
+      ('available', 'Available', _filter(bikes, 'available', true)),
+      ('needs_attention', 'Needs attention',
+          _filter(bikes, 'needs_attention', true)),
+      ('offline', 'Offline', _filter(bikes, 'offline', true)),
+      ('no_signal', 'No signal', _filter(bikes, '', false)),
+    ];
+    final totalShown = groups.fold(0, (n, g) => n + g.$3.length);
+    return SizedBox(
+      width: 280,
+      child: DecoratedBox(
+        decoration: const BoxDecoration(
+          color: KsColors.surface,
+          border: Border(right: BorderSide(color: KsColors.border)),
+        ),
+        child: Column(
+          children: [
+            // Header strip with bike count + collapse button.
+            Container(
+              padding:
+                  const EdgeInsets.fromLTRB(14, 12, 8, 12),
+              decoration: const BoxDecoration(
+                border:
+                    Border(bottom: BorderSide(color: KsColors.border)),
+              ),
+              child: Row(children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Fleet',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
+                              color: KsColors.ink)),
+                      Text('$totalShown bikes',
+                          style: const TextStyle(
+                              color: KsColors.ink3, fontSize: 11)),
+                    ],
+                  ),
+                ),
+                Tooltip(
+                  message: 'Collapse sidebar',
+                  child: InkWell(
+                    onTap: onClose,
+                    borderRadius: BorderRadius.circular(20),
+                    child: const Padding(
+                      padding: EdgeInsets.all(6),
+                      child: Icon(Icons.chevron_left,
+                          size: 20, color: KsColors.ink3),
+                    ),
+                  ),
+                ),
+              ]),
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                children: [
+                  for (final g in groups)
+                    if (g.$3.isNotEmpty) ...[
+                      _GroupHeader(label: g.$2, count: g.$3.length),
+                      for (final b in g.$3)
+                        _BikeRow(
+                          bike: b,
+                          selected: selectedId == b.id,
+                          onTap: () => onSelect(b),
+                        ),
+                    ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static List<BikeGPS> _filter(
+      List<BikeGPS> bikes, String status, bool hasFix) {
+    final out = bikes.where((b) {
+      if (hasFix && !b.hasFix) return false;
+      if (!hasFix && b.hasFix) return false;
+      if (status.isEmpty) return true;
+      return b.liveStatus == status;
+    }).toList();
+    out.sort((a, b) {
+      final an = a.nickname.isEmpty ? a.id : a.nickname;
+      final bn = b.nickname.isEmpty ? b.id : b.nickname;
+      return an.toLowerCase().compareTo(bn.toLowerCase());
+    });
+    return out;
+  }
+}
+
+class _GroupHeader extends StatelessWidget {
+  final String label;
+  final int count;
+  const _GroupHeader({required this.label, required this.count});
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
+      child: Text('${label.toUpperCase()} · $count',
+          style: GoogleFonts.plusJakartaSans(
+              color: KsColors.ink3,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.4)),
+    );
+  }
+}
+
+class _BikeRow extends StatelessWidget {
+  final BikeGPS bike;
+  final bool selected;
+  final VoidCallback onTap;
+  const _BikeRow({
+    required this.bike,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colour = _liveStatusColour(bike.liveStatus);
+    final name = bike.nickname.isEmpty ? bike.id : bike.nickname;
+    final canJump = bike.hasFix;
+    return InkWell(
+      onTap: canJump ? onTap : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? KsColors.primaryTint : null,
+          border: Border(
+            left: BorderSide(
+              color: selected ? KsColors.primary : Colors.transparent,
+              width: 3,
+            ),
+          ),
+        ),
+        child: Row(children: [
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: canJump ? colour : KsColors.ink4,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.plusJakartaSans(
+                      color: canJump ? KsColors.ink : KsColors.ink3,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    )),
+                if (bike.registration.isNotEmpty)
+                  Text(bike.registration,
+                      style: GoogleFonts.spaceMono(
+                          color: KsColors.ink3, fontSize: 11)),
+              ],
+            ),
+          ),
+          if (canJump)
+            Text(_shortLastSeen(bike.lastSeenAt),
+                style: const TextStyle(
+                    color: KsColors.ink3, fontSize: 11)),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Slim vertical tab that re-opens the sidebar when it's collapsed.
+/// Sits flush against the left edge of the map; the chevron-right
+/// glyph hints "expand back out."
+class _SidebarReopenTab extends StatelessWidget {
+  final VoidCallback onOpen;
+  const _SidebarReopenTab({required this.onOpen});
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Show fleet sidebar',
+      child: Material(
+        color: KsColors.surface,
+        elevation: 2,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.only(
+            topRight: Radius.circular(10),
+            bottomRight: Radius.circular(10),
+          ),
+        ),
+        child: InkWell(
+          onTap: onOpen,
+          child: Container(
+            width: 24,
+            height: 72,
+            decoration: BoxDecoration(
+              border: Border.all(color: KsColors.border),
+              borderRadius: const BorderRadius.only(
+                topRight: Radius.circular(10),
+                bottomRight: Radius.circular(10),
+              ),
+            ),
+            alignment: Alignment.center,
+            child: const Icon(Icons.chevron_right,
+                size: 20, color: KsColors.ink3),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _shortLastSeen(String iso) {
+  if (iso.isEmpty) return '';
+  final at = DateTime.tryParse(iso);
+  if (at == null) return '';
+  final delta = DateTime.now().toUtc().difference(at.toUtc());
+  if (delta.inMinutes < 1) return 'now';
+  if (delta.inMinutes < 60) return '${delta.inMinutes}m';
+  if (delta.inHours < 24) return '${delta.inHours}h';
+  if (delta.inDays < 7) return '${delta.inDays}d';
+  return '>1w';
 }
 
 class _NoSignalPanel extends StatelessWidget {

@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -17,6 +18,8 @@ type Location struct {
 	Name      string
 	Address   string
 	Image     []byte // inline header JPEG (~300×120); empty when none seeded
+	Lat       *float64 // optional WGS-84 coords; drives proximity check + map jump-to
+	Lng       *float64
 	CreatedAt time.Time
 }
 
@@ -47,7 +50,7 @@ func CreateLocation(ctx context.Context, scope *tenant.Scope, req CreateLocation
 
 func ListLocations(ctx context.Context, scope *tenant.Scope) ([]Location, error) {
 	rows, err := scope.Conn().QueryContext(ctx, `
-		SELECT id, name, COALESCE(address, ''), image, created_at
+		SELECT id, name, COALESCE(address, ''), image, lat, lng, created_at
 		FROM locations WHERE school_id = ? ORDER BY name ASC
 	`, string(scope.SchoolID()))
 	if err != nil {
@@ -58,8 +61,17 @@ func ListLocations(ctx context.Context, scope *tenant.Scope) ([]Location, error)
 	for rows.Next() {
 		var l Location
 		var createdStr string
-		if err := rows.Scan(&l.ID, &l.Name, &l.Address, &l.Image, &createdStr); err != nil {
+		var lat, lng sql.NullFloat64
+		if err := rows.Scan(&l.ID, &l.Name, &l.Address, &l.Image, &lat, &lng, &createdStr); err != nil {
 			return nil, err
+		}
+		if lat.Valid {
+			v := lat.Float64
+			l.Lat = &v
+		}
+		if lng.Valid {
+			v := lng.Float64
+			l.Lng = &v
 		}
 		l.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 		out = append(out, l)
