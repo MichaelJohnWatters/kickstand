@@ -30,6 +30,7 @@ var (
 	ErrEmailAlreadyInUse = errors.New("signup: email already in use")
 	ErrInvalidEmail      = errors.New("signup: invalid email")
 	ErrMissingField      = errors.New("signup: a required field is missing")
+	ErrInvalidField      = errors.New("signup: a field has an invalid value")
 	ErrNotPending        = errors.New("signup: user is not in pending_approval state")
 	ErrPendingNotFound   = errors.New("signup: pending user not found in this school")
 )
@@ -132,7 +133,9 @@ func signupFirebaseAt(ctx context.Context, d *sql.DB, req FirebaseSignupRequest,
 			    licence_category_pursued, rider_date_of_birth, cbt_certificate_held, theory_passed)
 			VALUES (?, ?, ?, ?, ?, 0, 0)
 		`, string(userID), string(req.SchoolID),
-			string(req.TransmissionPreference), string(req.LicenceCategoryPursued), req.DateOfBirth)
+			nullIfEmpty(string(req.TransmissionPreference)),
+			nullIfEmpty(string(req.LicenceCategoryPursued)),
+			nullIfEmpty(req.DateOfBirth))
 		return err
 	})
 	if err != nil {
@@ -159,7 +162,30 @@ func validateFirebaseReq(req FirebaseSignupRequest) error {
 	if !looksLikeEmail(req.Email) {
 		return ErrInvalidEmail
 	}
+	// transmission_preference and licence_category_pursued are optional
+	// (nullable) but CHECK-constrained: an unknown non-empty value would be
+	// rejected by the DB after we'd already created the Firebase user, so
+	// validate up front. Empty is allowed and stored as NULL (see insert).
+	if t := string(req.TransmissionPreference); t != "" && t != "manual" && t != "auto" {
+		return ErrInvalidField
+	}
+	if c := string(req.LicenceCategoryPursued); c != "" {
+		switch c {
+		case "AM", "A1", "A2", "A":
+		default:
+			return ErrInvalidField
+		}
+	}
 	return nil
+}
+
+// nullIfEmpty binds an empty string as SQL NULL so a nullable CHECK-constrained
+// column accepts "no value" rather than rejecting "".
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // PendingApplicant is one row in the manager's "pending sign-ups" queue.

@@ -148,7 +148,10 @@ func loadSessions(ctx context.Context, scope *tenant.Scope, q Query) ([]SessionR
 	if !q.IncludeCancelled {
 		query += ` AND s.status <> 'cancelled'`
 	}
-	args := []any{string(scope.SchoolID()), q.From.Format(time.RFC3339), q.To.Format(time.RFC3339)}
+	// Normalise to UTC before formatting: sessions are stored Z-suffixed, and
+	// the window is compared lexicographically — a non-UTC offset in From/To
+	// (e.g. "+01:00") would sort wrong against "Z" and mis-window the results.
+	args := []any{string(scope.SchoolID()), q.From.UTC().Format(time.RFC3339), q.To.UTC().Format(time.RFC3339)}
 	if q.InstructorID != "" {
 		query += ` AND s.instructor_id = ?`
 		args = append(args, string(q.InstructorID))
@@ -363,7 +366,13 @@ func computeTravelWarnings(sessions []SessionRow, matrix map[travelKey]int, buff
 	}
 
 	var out []TravelWarning
-	for _, group := range byInstr {
+	for instrID, group := range byInstr {
+		// Unstaffed sessions all carry instructor "" and would otherwise be
+		// compared pairwise as if one person drove between them — phantom
+		// warnings for journeys nobody makes. No instructor, no travel.
+		if instrID == "" {
+			continue
+		}
 		sort.Slice(group, func(i, j int) bool {
 			return group[i].StartsAt.Before(group[j].StartsAt)
 		})

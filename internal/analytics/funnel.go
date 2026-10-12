@@ -64,7 +64,10 @@ func computeSignupConversion(ctx context.Context, scope *tenant.Scope, w Window,
 				WHERE b.school_id = u.school_id
 				  AND b.student_id = u.id
 				  AND b.status != 'cancelled'
-				  AND b.created_at <= datetime(u.created_at, '+30 days')
+				  -- datetime() both sides: stored values are RFC3339 ("…T…Z")
+				  -- but datetime() emits space-separated ("… …"), so comparing
+				  -- the raw column against datetime(...) mis-sorts boundary dates.
+				  AND datetime(b.created_at) <= datetime(u.created_at, '+30 days')
 			) THEN 1 ELSE 0 END), 0) AS converted
 		FROM users u
 		WHERE u.school_id = ? AND u.role = 'student'
@@ -178,7 +181,9 @@ func computePerInstructorPassRates(ctx context.Context, scope *tenant.Scope, w W
 					  AND b.student_id = et.student_id
 					  AND b.status NOT IN ('cancelled', 'no_show')
 					  AND s.starts_at <= et.created_at
-					  AND s.starts_at >= datetime(et.created_at, '-90 days')
+					  -- datetime() both sides (see funnel conversion note): the raw
+					  -- RFC3339 column mis-sorts against datetime()'s space format.
+					  AND datetime(s.starts_at) >= datetime(et.created_at, '-90 days')
 					ORDER BY s.starts_at DESC
 					LIMIT 1
 				) AS instructor_id

@@ -308,6 +308,41 @@ func TestDisruption_DoubleResolveRejected(t *testing.T) {
 	}
 }
 
+func TestTakeBikeOffline_RejectsInvalidReason(t *testing.T) {
+	f := newFixture(t)
+	_, err := booking.TakeBikeOffline(context.Background(), f.scope, booking.TakeBikeOfflineRequest{
+		BikeID:    f.bikeA2,
+		Reason:    "flat tyre", // free text, not in the bike_unavailability CHECK set
+		StartsAt:  f.now.Add(time.Hour),
+		EndsAt:    f.now.AddDate(1, 0, 0),
+		CreatedBy: f.instructor,
+	})
+	if !errors.Is(err, booking.ErrInvalidReason) {
+		t.Fatalf("expected ErrInvalidReason for free-text reason, got %v", err)
+	}
+}
+
+func TestTakeBikeOffline_EmptyReasonDefaultsToOther(t *testing.T) {
+	f := newFixture(t)
+	if _, err := booking.TakeBikeOffline(context.Background(), f.scope, booking.TakeBikeOfflineRequest{
+		BikeID:    f.bikeA2,
+		Reason:    "",
+		StartsAt:  f.now.Add(time.Hour),
+		EndsAt:    f.now.AddDate(1, 0, 0),
+		CreatedBy: f.instructor,
+	}); err != nil {
+		t.Fatalf("empty reason should default to 'other', got: %v", err)
+	}
+	var reason string
+	if err := f.db.QueryRow(`SELECT reason FROM bike_unavailability WHERE bike_id = ?`,
+		f.bikeA2).Scan(&reason); err != nil {
+		t.Fatalf("read bike_unavailability: %v", err)
+	}
+	if reason != "other" {
+		t.Errorf("stored reason = %q, want 'other'", reason)
+	}
+}
+
 func TestDisruption_BikeNotFound(t *testing.T) {
 	f := newFixture(t)
 	_, err := booking.TakeBikeOffline(context.Background(), f.scope,

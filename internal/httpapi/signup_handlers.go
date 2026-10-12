@@ -255,6 +255,8 @@ func writeSignupError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_email", err.Error())
 	case errors.Is(err, signup.ErrMissingField):
 		writeError(w, http.StatusBadRequest, "missing_field", err.Error())
+	case errors.Is(err, signup.ErrInvalidField):
+		writeError(w, http.StatusBadRequest, "invalid_field", err.Error())
 	case errors.Is(err, signup.ErrPendingNotFound):
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, signup.ErrNotPending):

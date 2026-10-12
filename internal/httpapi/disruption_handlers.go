@@ -254,6 +254,8 @@ func writeDisruptionError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, booking.ErrInvalidWindow):
 		writeError(w, http.StatusBadRequest, "bad_window", err.Error())
+	case errors.Is(err, booking.ErrInvalidReason):
+		writeError(w, http.StatusBadRequest, "bad_reason", err.Error())
 	case errors.Is(err, booking.ErrDisruptionNotFound), errors.Is(err, booking.ErrNotAffectedByThis):
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, booking.ErrSwapBikeNotSuitable):

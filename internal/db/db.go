@@ -137,7 +137,28 @@ func loadAppliedSet(ctx context.Context, d *sql.DB) (map[string]bool, error) {
 }
 
 func applyMigration(ctx context.Context, d *sql.DB, m migration) error {
-	tx, err := d.BeginTx(ctx, nil)
+	// Table-rebuild migrations DROP and recreate FK-referenced tables (SQLite
+	// can't ALTER a CHECK/column in place). That requires FK enforcement to be
+	// OFF — but PRAGMA foreign_keys is a silent no-op inside a transaction, and
+	// defer_foreign_keys does not help under modernc's SQLite. So grab a
+	// dedicated connection, disable FK enforcement on it *before* opening the
+	// tx, then run the migration in that tx. Doing this for every migration is
+	// harmless (migrations are trusted) and the foreign_key_check below is the
+	// safety net that catches any migration which leaves a dangling reference.
+	conn, err := d.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+		return err
+	}
+	// Restore enforcement before the connection returns to the pool, whatever
+	// happens below (a pooled conn left with FK off would silently disable
+	// enforcement for the next user).
+	defer func() { _, _ = conn.ExecContext(context.Background(), `PRAGMA foreign_keys=ON`) }()
+
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -151,5 +172,19 @@ func applyMigration(ctx context.Context, d *sql.DB, m migration) error {
 	); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// Integrity backstop: FK was off during apply, so verify the migration
+	// didn't leave any dangling references behind.
+	rows, err := conn.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		return fmt.Errorf("migration %s left foreign-key violations", m.id)
+	}
+	return rows.Err()
 }

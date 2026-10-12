@@ -87,7 +87,26 @@ var (
 	ErrNotAffectedByThis    = errors.New("disruption: booking is not affected by this disruption")
 	ErrSwapBikeNotSuitable  = errors.New("disruption: proposed swap bike is not a valid candidate")
 	ErrAlreadyResolved      = errors.New("disruption: booking resolution already recorded")
+	ErrInvalidReason        = errors.New("disruption: reason must be one of mechanic/damaged/broken/off_road/other")
 )
+
+// offlineReasons is the CHECK-constrained set for bike_unavailability.reason.
+var offlineReasons = map[string]bool{
+	"mechanic": true, "damaged": true, "broken": true, "off_road": true, "other": true,
+}
+
+// normalizeOfflineReason maps an empty reason to "other" (a reasonable default
+// for an unspecified take-offline) and rejects any other value not in the DB
+// CHECK set — otherwise the INSERT would fail with an opaque constraint error.
+func normalizeOfflineReason(reason string) (string, error) {
+	if reason == "" {
+		return "other", nil
+	}
+	if !offlineReasons[reason] {
+		return "", ErrInvalidReason
+	}
+	return reason, nil
+}
 
 // TakeBikeOffline runs the entire detection+linking step in one transaction:
 // inserts the bike_unavailability, opens a disruption record, finds all
@@ -101,9 +120,14 @@ func takeBikeOfflineAt(ctx context.Context, scope *tenant.Scope, req TakeBikeOff
 	if !req.EndsAt.After(req.StartsAt) {
 		return nil, ErrInvalidWindow
 	}
+	reason, err := normalizeOfflineReason(req.Reason)
+	if err != nil {
+		return nil, err
+	}
+	req.Reason = reason
 
 	var out *TakeBikeOfflineResult
-	err := scope.WithTx(ctx, func(tx *tenant.Scope) error {
+	err = scope.WithTx(ctx, func(tx *tenant.Scope) error {
 		r, err := takeBikeOfflineInTx(ctx, tx, req, nowFn())
 		if err != nil {
 			return err

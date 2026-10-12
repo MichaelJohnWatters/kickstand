@@ -126,6 +126,72 @@ func (f *fixture) seed() {
 
 // ----- Tests -----
 
+func TestGetStudentProgress_NoDoubleCountOnTiedRecordedAt(t *testing.T) {
+	f := newFixture(t)
+	at := f.now.Format(time.RFC3339)
+	// A second CBT booking: UNIQUE(booking_id, competency_id) means a
+	// competency can only be assessed twice across two different bookings.
+	if _, err := f.db.Exec(`INSERT INTO sessions
+		(id, school_id, course_type_id, instructor_id, location_id, starts_at, ends_at, capacity, created_at)
+		VALUES ('sess_t2', ?, ?, ?, ?, ?, ?, 2, ?)`,
+		f.school, f.courseCBT, f.instructor, f.location,
+		f.now.Add(72*time.Hour).Format(time.RFC3339), f.now.Add(76*time.Hour).Format(time.RFC3339), at); err != nil {
+		t.Fatalf("second session: %v", err)
+	}
+	if _, err := f.db.Exec(`INSERT INTO bookings
+		(id, school_id, session_id, student_id, bike_id, status, created_at)
+		VALUES ('booking_t2', ?, 'sess_t2', ?, ?, 'booked', ?)`,
+		f.school, f.student, f.bike, at); err != nil {
+		t.Fatalf("second booking: %v", err)
+	}
+
+	// Assess the SAME competency (U-turn) on both bookings with an IDENTICAL
+	// recorded_at — the second-precision tie that used to duplicate the
+	// competency in the rollup (e.g. "7 of 6 competent").
+	tied := f.now.Add(26 * time.Hour).Format(time.RFC3339)
+	ins := func(id, bookingID string) {
+		if _, err := f.db.Exec(`INSERT INTO progress_records
+			(id, school_id, booking_id, student_id, competency_id, status, recorded_at, recorded_by)
+			VALUES (?, ?, ?, ?, ?, 'competent', ?, ?)`,
+			id, f.school, bookingID, f.student, f.compUturn, tied, f.instructor); err != nil {
+			t.Fatalf("insert progress record %s: %v", id, err)
+		}
+	}
+	ins("pr1", string(f.booking))
+	ins("pr2", "booking_t2")
+
+	sp, err := progress.GetStudentProgress(context.Background(), f.scope, f.student)
+	if err != nil {
+		t.Fatalf("get progress: %v", err)
+	}
+	var cbt *progress.CourseProgress
+	for i := range sp.Courses {
+		if sp.Courses[i].CourseTypeID == f.courseCBT {
+			cbt = &sp.Courses[i]
+		}
+	}
+	if cbt == nil {
+		t.Fatal("CBT course missing from progress")
+	}
+	// Course has exactly two competencies (U-turn, Emergency stop); the tie
+	// must not inflate the rollup.
+	if cbt.TotalCompetencies != 2 {
+		t.Errorf("TotalCompetencies = %d, want 2 (tied recorded_at double-counted)", cbt.TotalCompetencies)
+	}
+	if cbt.CompetentCount != 1 {
+		t.Errorf("CompetentCount = %d, want 1", cbt.CompetentCount)
+	}
+	n := 0
+	for _, c := range cbt.Competencies {
+		if c.CompetencyID == f.compUturn {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("U-turn competency appears %d times, want 1", n)
+	}
+}
+
 func TestMarkAttendance_HappyPath(t *testing.T) {
 	f := newFixture(t)
 	if err := progress.MarkAttendance(context.Background(), f.scope, progress.MarkAttendanceRequest{

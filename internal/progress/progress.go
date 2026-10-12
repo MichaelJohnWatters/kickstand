@@ -563,15 +563,22 @@ func courseProgress(ctx context.Context, scope *tenant.Scope, studentID domain.U
 		       latest.status AS status, COALESCE(latest.recorded_at, '') AS recorded_at
 		FROM competencies c
 		LEFT JOIN (
+		    -- Exactly one row per competency: the newest record, breaking
+		    -- recorded_at ties deterministically by rowid. A plain
+		    -- "recorded_at = MAX(recorded_at)" join duplicated a competency
+		    -- when two records (e.g. across bookings) shared the same
+		    -- second-precision timestamp, double-counting the rollup.
 		    SELECT competency_id, status, recorded_at
-		    FROM progress_records pr
-		    WHERE pr.school_id = ? AND pr.student_id = ?
-		      AND pr.recorded_at = (
-		        SELECT MAX(recorded_at) FROM progress_records pr2
-		        WHERE pr2.school_id = pr.school_id
-		          AND pr2.student_id = pr.student_id
-		          AND pr2.competency_id = pr.competency_id
-		      )
+		    FROM (
+		        SELECT competency_id, status, recorded_at,
+		               ROW_NUMBER() OVER (
+		                   PARTITION BY competency_id
+		                   ORDER BY recorded_at DESC, rowid DESC
+		               ) AS rn
+		        FROM progress_records
+		        WHERE school_id = ? AND student_id = ?
+		    )
+		    WHERE rn = 1
 		) latest ON latest.competency_id = c.id
 		WHERE c.school_id = ? AND c.course_type_id = ?
 		ORDER BY c.sort_order ASC, c.label ASC
