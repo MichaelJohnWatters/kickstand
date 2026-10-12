@@ -127,7 +127,7 @@ class _WaitlistRowState extends ConsumerState<_WaitlistRow> {
   @override
   Widget build(BuildContext context) {
     final e = widget.entry;
-    final accent = courseAccent(e.courseAccent);
+    final accent = courseAccent(e.courseCode, e.courseAccent);
     final dateStr = DateFormat('EEE d MMM · HH:mm').format(e.sessionStartsAt.toLocal());
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -448,7 +448,8 @@ class _BookingCardState extends ConsumerState<_BookingCard> {
     }
   }
 
-  void _reschedule() => context.go('/student/browse');
+  void _reschedule() =>
+      context.go('/student/browse?reschedule=${widget.b.bookingId}');
 
   @override
   Widget build(BuildContext context) {

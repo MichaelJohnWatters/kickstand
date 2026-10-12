@@ -59,8 +59,7 @@ void refreshStudentTab(WidgetRef ref, String routePrefix) {
 }
 
 void refreshInstructorTab(WidgetRef ref, String routePrefix) {
-  if (routePrefix.startsWith('/instructor/schedule') ||
-      routePrefix == '/instructor') {
+  if (routePrefix == '/instructor') {
     ref.invalidate(scheduleSessionsProvider);
   } else if (routePrefix.startsWith('/instructor/availability')) {
     // Family-wide invalidation clears every cached instructor id at once.
@@ -85,7 +84,7 @@ void refreshAdminTab(WidgetRef ref, String routePrefix) {
   ref.invalidate(expensesForReviewProvider);
   ref.invalidate(openFollowupsProvider);
 
-  if (routePrefix == '/admin' || routePrefix.startsWith('/admin/overview')) {
+  if (routePrefix == '/admin') {
     ref.invalidate(fleetProvider);
     ref.invalidate(openDisruptionsProvider);
     ref.invalidate(logisticsForDateProvider);

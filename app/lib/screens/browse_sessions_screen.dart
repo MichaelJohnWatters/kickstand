@@ -22,6 +22,7 @@ import '../api/models.dart';
 import '../state/providers.dart';
 import '../theme/tokens.dart';
 import '../widgets/student_top_actions.dart';
+import 'my_bookings_screen.dart' show myBookingsProvider;
 
 // Kept long-lived (no autoDispose) so tab switches read the cached list
 // instead of hitting the API each time — that was the main source of the
@@ -77,7 +78,11 @@ IconData courseIcon(String code) {
 }
 
 class BrowseSessionsScreen extends ConsumerStatefulWidget {
-  const BrowseSessionsScreen({super.key});
+  /// When non-null, this screen reschedules the given booking instead of
+  /// creating a fresh one: picking a session + confirming calls the atomic
+  /// `/reschedule` endpoint (cancel old + book new) rather than `book`.
+  final String? rescheduleBookingId;
+  const BrowseSessionsScreen({super.key, this.rescheduleBookingId});
 
   @override
   ConsumerState<BrowseSessionsScreen> createState() => _BrowseSessionsScreenState();
@@ -118,14 +123,25 @@ class _BrowseSessionsScreenState extends ConsumerState<BrowseSessionsScreen> {
     });
     try {
       final api = ref.read(apiClientProvider);
-      final res = await api.book(
-        sessionId: _session!.sessionId,
-        bikeId: _bikeId == 'any' ? null : _bikeId,
-      );
+      final bikeId = _bikeId == 'any' ? null : _bikeId;
+      final rescheduleId = widget.rescheduleBookingId;
+      final res = rescheduleId == null
+          ? await api.book(sessionId: _session!.sessionId, bikeId: bikeId)
+          : await api.reschedule(
+              bookingId: rescheduleId,
+              newSessionId: _session!.sessionId,
+              newBikeId: bikeId,
+            );
       if (!mounted) return;
       ref.read(lastBookingProvider.notifier).state = res;
       // Refresh anything the booking touched.
       ref.invalidate(sessionsProvider);
+      if (rescheduleId != null) {
+        // The old booking is now cancelled and a new one exists — refresh
+        // both My Bookings lists so neither shows stale state.
+        ref.invalidate(myBookingsProvider('upcoming'));
+        ref.invalidate(myBookingsProvider('past'));
+      }
       context.go('/student/confirmed/${res.booking.id}');
     } on ApiException catch (e) {
       // The list lied: another student grabbed the slot or the engine ran
@@ -225,7 +241,10 @@ class _BrowseSessionsScreenState extends ConsumerState<BrowseSessionsScreen> {
       backgroundColor: KsColors.bg,
       appBar: _step == 1
           ? AppBar(
-              title: Text('Book training',
+              title: Text(
+                  widget.rescheduleBookingId == null
+                      ? 'Book training'
+                      : 'Reschedule booking',
                   style: GoogleFonts.plusJakartaSans(
                       fontWeight: FontWeight.w800, fontSize: 22)),
               automaticallyImplyLeading: false,
@@ -443,6 +462,9 @@ class _StepSlots extends ConsumerWidget {
                         try {
                           await ref.read(apiClientProvider)
                               .joinSessionWaitlist(s.sessionId);
+                          // Reflect the new entry on the My Bookings
+                          // "On the waitlist" section immediately.
+                          ref.invalidate(myWaitlistProvider);
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                               content: const Text(

@@ -99,6 +99,39 @@ class ApiClient {
     return res;
   }
 
+  /// Multipart POST seam — kept separate from [_send] because `FormData`
+  /// can't be JSON-serialised. It is its own overridable method (not inlined
+  /// `_dio.post`) so [MockApiClient] can intercept receipt uploads in demo
+  /// mode instead of hitting the real network against `demo://`.
+  Future<Response<dynamic>> _sendMultipart(String path, FormData form) async {
+    Response<dynamic> res;
+    try {
+      res = await _dio.post<dynamic>(
+        path,
+        data: form,
+        options: Options(
+          contentType: 'multipart/form-data',
+          validateStatus: (s) => s != null && s < 500,
+        ),
+      );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+    if ((res.statusCode ?? 0) >= 400) {
+      final body = res.data;
+      if (body is Map<String, dynamic>) {
+        throw ApiException(
+          res.statusCode!,
+          body['error']?.toString() ?? 'unknown',
+          body['message']?.toString() ?? 'Something went wrong.',
+        );
+      }
+      throw ApiException(
+          res.statusCode ?? 0, 'unknown', 'Something went wrong.');
+    }
+    return res;
+  }
+
   /// Translate Dio's transport-layer errors into our typed ApiException with
   /// a friendly human message. Screens can branch on `code` for special
   /// handling (e.g. retry button) and otherwise just display `message`.
@@ -226,6 +259,31 @@ class ApiClient {
       if (studentId != null) 'studentId': studentId,
     });
     return BookingResult.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  /// POST /bookings/{id}/reschedule — atomically cancel [bookingId] and
+  /// re-book the student onto [newSessionId] in one engine transaction.
+  /// The response carries {cancelledBooking, newBooking, advisories}; we
+  /// surface the NEW booking + advisories as a [BookingResult] so the
+  /// confirmation screen renders identically to a fresh booking.
+  Future<BookingResult> reschedule({
+    required String bookingId,
+    required String newSessionId,
+    String? newBikeId,
+    String? reason,
+  }) async {
+    final res = await _send('POST', '/bookings/$bookingId/reschedule', data: {
+      'newSessionId': newSessionId,
+      if (newBikeId != null) 'newBikeId': newBikeId,
+      if (reason != null && reason.isNotEmpty) 'reason': reason,
+    });
+    final j = res.data as Map<String, dynamic>;
+    return BookingResult(
+      booking: Booking.fromJson(j['newBooking'] ?? const {}),
+      advisories: ((j['advisories'] as List?) ?? const [])
+          .map((e) => Advisory.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
   }
 
   /// POST /bookings/{id}/assign-bike — admin swaps the bike on a
@@ -1359,21 +1417,7 @@ class ApiClient {
       if (notes != null && notes.isNotEmpty) 'notes': notes,
       'receipt': await MultipartFile.fromFile(receiptPath, filename: 'receipt.jpg'),
     });
-    final res = await _dio.post<dynamic>('/bikes/$bikeId/expenses',
-        data: form,
-        options: Options(
-          contentType: 'multipart/form-data',
-          validateStatus: (s) => s != null && s < 500,
-        ));
-    if ((res.statusCode ?? 0) >= 400) {
-      final body = res.data;
-      if (body is Map<String, dynamic>) {
-        throw ApiException(res.statusCode!,
-            body['error']?.toString() ?? 'unknown',
-            body['message']?.toString() ?? 'Could not record the expense.');
-      }
-      throw ApiException(res.statusCode ?? 0, 'unknown', 'Could not record the expense.');
-    }
+    final res = await _sendMultipart('/bikes/$bikeId/expenses', form);
     final wrap = res.data as Map<String, dynamic>;
     return BikeExpense.fromJson(wrap['expense'] as Map<String, dynamic>);
   }
@@ -1551,22 +1595,7 @@ class ApiClient {
       // would assert on `kIsWeb`.
       'receipt': MultipartFile.fromBytes(receiptBytes, filename: receiptFilename),
     });
-    // Don't use _send: it forces application/json and we need multipart.
-    final res = await _dio.post<dynamic>('/me/expenses',
-        data: form,
-        options: Options(
-          contentType: 'multipart/form-data',
-          validateStatus: (s) => s != null && s < 500,
-        ));
-    if ((res.statusCode ?? 0) >= 400) {
-      final body = res.data;
-      if (body is Map<String, dynamic>) {
-        throw ApiException(res.statusCode!,
-            body['error']?.toString() ?? 'unknown',
-            body['message']?.toString() ?? 'Something went wrong.');
-      }
-      throw ApiException(res.statusCode ?? 0, 'unknown', 'Something went wrong.');
-    }
+    final res = await _sendMultipart('/me/expenses', form);
     return Expense.fromJson((res.data as Map<String, dynamic>)['expense']);
   }
 

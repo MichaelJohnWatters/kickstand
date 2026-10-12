@@ -157,7 +157,11 @@ GoRouter buildRouter(Ref ref) {
         builder: (ctx, state, child) => StudentShell(child: child),
         routes: [
           GoRoute(path: '/student', pageBuilder: (_, __) => _instant(const StudentHomeScreen())),
-          GoRoute(path: '/student/browse', pageBuilder: (_, __) => _instant(const BrowseSessionsScreen())),
+          GoRoute(
+              path: '/student/browse',
+              pageBuilder: (_, state) => _instant(BrowseSessionsScreen(
+                  rescheduleBookingId:
+                      state.uri.queryParameters['reschedule']))),
           GoRoute(path: '/student/bookings', pageBuilder: (_, __) => _instant(const MyBookingsScreen())),
           GoRoute(path: '/student/progress', pageBuilder: (_, __) => _instant(const ProgressScreen())),
           GoRoute(path: '/student/licence', pageBuilder: (_, __) => _instant(const LicenceScreen())),

@@ -119,6 +119,27 @@ class MockApiClient extends ApiClient {
     );
   }
 
+  // Receipt uploads (expense / bike-maintenance). In demo mode we accept the
+  // upload optimistically and echo back a plausible expense so the UI's
+  // fromJson + list-invalidate render without hitting the real network.
+  // (Like other demo writes it isn't persisted — a subsequent GET still
+  // serves the seed list; refresh resets everything.)
+  @override
+  Future<Response<dynamic>> _sendMultipart(String path, FormData form) async {
+    final fields = {for (final f in form.fields) f.key: f.value};
+    final expense = <String, dynamic>{
+      'id': 'demo-exp-${DateTime.now().millisecondsSinceEpoch}',
+      'status': 'pending',
+      'amountPence': int.tryParse(fields['amountPence'] ?? '') ?? 0,
+      ...fields,
+    };
+    return Response(
+      data: {'expense': expense},
+      requestOptions: RequestOptions(path: path),
+      statusCode: 201,
+    );
+  }
+
   // --- Read lookups ---
 
   dynamic _lookupGet(String path, Map<String, dynamic>? query) {

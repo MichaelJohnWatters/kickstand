@@ -5,6 +5,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../api/models.dart';
@@ -72,7 +73,7 @@ class InstructorProfileScreen extends ConsumerWidget {
               _linkRow(
                 icon: Icons.notifications_outlined,
                 label: 'Notification preferences',
-                onTap: null, // wired up when the prefs screen lands
+                onTap: () => context.push('/notifications/prefs'),
               ),
               const SizedBox(height: 10),
               _linkRow(
