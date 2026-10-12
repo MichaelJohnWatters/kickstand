@@ -190,6 +190,99 @@ func TestDisruption_ResolveCancelWithApproval(t *testing.T) {
 	}
 }
 
+// TestDisruption_ResolveCancelWithApproval_VoidsCharge locks in the 2026-06
+// money-safety fix: cancelling a disrupted booking must void the auto-charge
+// so the student isn't left owing for a session that won't happen. Regressing
+// disruption.go's voidAutoCharge call would otherwise pass unnoticed.
+func TestDisruption_ResolveCancelWithApproval_VoidsCharge(t *testing.T) {
+	f := newFixture(t)
+	booked, err := f.book(booking.Request{SessionID: f.sessionID, StudentID: f.studentA})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+
+	// Sanity: the auto-charge exists and is live before the disruption cancel.
+	var voided string
+	if err := f.db.QueryRow(`SELECT COALESCE(voided_at,'') FROM charges WHERE booking_id = ?`,
+		booked.Booking.ID).Scan(&voided); err != nil {
+		t.Fatalf("read charge: %v", err)
+	}
+	if voided != "" {
+		t.Fatal("charge was voided before the cancel even happened")
+	}
+
+	disrupt := takeOffline(t, f, booked.Booking.BikeID, 0)
+	if err := booking.ResolveAffectedBooking(context.Background(), f.scope,
+		booking.ResolveAffectedBookingRequest{
+			DisruptionID: disrupt.DisruptionID,
+			BookingID:    booked.Booking.ID,
+			Resolution:   booking.ResolveCancelWithApproval,
+			ApprovedBy:   f.instructor,
+		}); err != nil {
+		t.Fatalf("cancel-with-approval: %v", err)
+	}
+
+	if err := f.db.QueryRow(`SELECT COALESCE(voided_at,'') FROM charges WHERE booking_id = ?`,
+		booked.Booking.ID).Scan(&voided); err != nil {
+		t.Fatalf("read charge after cancel: %v", err)
+	}
+	if voided == "" {
+		t.Error("disruption cancel-with-approval did NOT void the auto-charge (money-safety regression)")
+	}
+}
+
+// TestDisruption_ResolveDismissed_LeavesChargeAndBookingUntouched pins the
+// post-session cleanup path: dismiss touches only the disruption link, leaving
+// the booking status and any charge exactly as they were (the session already
+// ran, so there's nothing to refund or re-notify).
+func TestDisruption_ResolveDismissed_LeavesChargeAndBookingUntouched(t *testing.T) {
+	f := newFixture(t)
+	booked, err := f.book(booking.Request{SessionID: f.sessionID, StudentID: f.studentA})
+	if err != nil {
+		t.Fatalf("book: %v", err)
+	}
+	disrupt := takeOffline(t, f, booked.Booking.BikeID, 0)
+
+	if err := booking.ResolveAffectedBooking(context.Background(), f.scope,
+		booking.ResolveAffectedBookingRequest{
+			DisruptionID: disrupt.DisruptionID,
+			BookingID:    booked.Booking.ID,
+			Resolution:   booking.ResolveDismissed,
+			ApprovedBy:   f.instructor,
+		}); err != nil {
+		t.Fatalf("dismiss: %v", err)
+	}
+
+	// Booking status unchanged by the dismiss (still needs_reassignment from
+	// the take-offline), and the charge must NOT be voided.
+	var status, voided string
+	if err := f.db.QueryRow(`SELECT status FROM bookings WHERE id = ?`, booked.Booking.ID).
+		Scan(&status); err != nil {
+		t.Fatalf("read booking: %v", err)
+	}
+	if status != "needs_reassignment" {
+		t.Errorf("dismiss changed booking status to %q; expected it untouched (needs_reassignment)", status)
+	}
+	if err := f.db.QueryRow(`SELECT COALESCE(voided_at,'') FROM charges WHERE booking_id = ?`,
+		booked.Booking.ID).Scan(&voided); err != nil {
+		t.Fatalf("read charge: %v", err)
+	}
+	if voided != "" {
+		t.Error("dismiss voided the charge; it should leave money untouched")
+	}
+
+	// Only the disruption link moves to 'dismissed'.
+	var resolution string
+	if err := f.db.QueryRow(`SELECT resolution FROM disruption_affected_bookings
+	                         WHERE disruption_id = ? AND booking_id = ?`,
+		disrupt.DisruptionID, booked.Booking.ID).Scan(&resolution); err != nil {
+		t.Fatalf("read disruption link: %v", err)
+	}
+	if resolution != "dismissed" {
+		t.Errorf("disruption link resolution = %q, want dismissed", resolution)
+	}
+}
+
 func TestDisruption_DoubleResolveRejected(t *testing.T) {
 	f := newFixture(t)
 	addA1Bike(t, f, "bike_a1_spare")

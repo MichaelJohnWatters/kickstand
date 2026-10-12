@@ -3,7 +3,30 @@
 State-of-build snapshot. The plan in `motorbike-training-plan.md` stays the design
 source of truth; this doc tracks what's actually built and where to pick up.
 
-Last updated: 2026-06-13 (Teltonika Codec-8 adapter + GPS proximity validation)
+Last updated: 2026-10-12 (security hardening + logic-review follow-ups)
+
+> **2026-10-12 — security hardening.** Post-launch review landed two rounds of
+> hardening on `main` (commits `4fa553e`, `baf2105`):
+> - **Request body cap** — all requests wrapped in `http.MaxBytesReader`
+>   (default 10 MiB, `-max-body-bytes` flag).
+> - **Server timeouts** — `ReadTimeout`/`WriteTimeout`/`IdleTimeout` added
+>   alongside the existing `ReadHeaderTimeout`.
+> - **CORS now fails closed** — reflects an Origin only if it's in
+>   `KS_CORS_ALLOWED_ORIGINS`, or (with none set) if it's localhost.
+>   **Production deploys MUST set `KS_CORS_ALLOWED_ORIGINS`.**
+> - **500 responses sanitized** — `writeInternal` logs the raw error
+>   server-side and returns a generic message; no SQL/driver internals leak.
+> - **Ownership guards** — availability slot/time-off deletes require the
+>   owning instructor (admin/owner exempt); device-token unregister filters
+>   by `user_id`.
+> - **Flutter** — demo-credential login prefill is now `kDebugMode`-gated
+>   (release builds ship an empty form).
+>
+> A logic review (2026-10-12) verified the booking/disruption/ledger/seed/
+> reminders engines against these docs: **no behavioural bugs found**. It added
+> regression tests for the disruption cancel-voids-charge and dismiss paths,
+> and removed a stray 8.8 MB `gps-simulator` binary mistakenly committed at the
+> repo root (source lives in `cmd/gps-simulator/`).
 
 ---
 
@@ -221,7 +244,13 @@ All sidebar items live:
   with no fix appear in an off-map "No signal · N" panel. Provider-agnostic
   write via `POST /bikes/{id}/gps` for schools wiring real trackers.
   Scheduling/logistics engine never reads GPS — physical-vs-logical
-  separation per plan §7 stays intact.
+  separation per plan §7 stays intact. Map has MapController-driven
+  zoom/pan controls (+/−/reset), a "jump to location" chip bar, and a
+  collapsible left fleet sidebar; the admin shell itself has a
+  collapsible nav rail (256px ↔ 64px). A **GPS simulator**
+  (`cmd/gps-simulator/`, `make build` → `bin/gps-simulator`) feeds
+  synthetic fixes into `POST /bikes/{id}/gps` so the live map can be
+  demoed without real trackers.
 - **Instructors** — staff cards with **per-course accreditation** chips (each
   with expiry date). Edit sheet has a date picker per course. Invite modal too.
 - **Instructor pay** — hero with total outstanding, per-instructor stats,

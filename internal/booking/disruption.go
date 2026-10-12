@@ -543,14 +543,17 @@ func applyCancelWithApprovalInTx(ctx context.Context, tx *tenant.Scope, req Reso
 }
 
 // DismissPastPendingDisruptions sweeps every still-`pending`
-// disruption_affected_bookings link whose session has already ended
-// and applies cancel-with-approval. Used by the admin's "Dismiss past"
-// cleanup — managers shouldn't have to click through five-by-five
-// when last week's broken-clutch disruption was never tidied up.
+// disruption_affected_bookings link whose session has already ended and
+// applies the `dismissed` resolution (ResolveDismissed): the disruption link
+// is closed but the booking row and any auto-charge are left untouched, and
+// no notify hook fires — the session already ran, so there's nothing to
+// refund or re-notify. Used by the admin's "Dismiss past" cleanup so managers
+// needn't click through row-by-row when last week's broken-clutch disruption
+// was never tidied up.
 //
-// Each row is processed inside the existing per-row tx machinery so
-// the notify hooks fire the same way they would on a manual cancel.
-// Returns the count of rows handled.
+// Each row is processed inside the existing per-row tx machinery. Returns the
+// count of rows handled (field named Cancelled for wire-compat; these rows are
+// dismissed, not cancelled).
 type DismissPastResult struct {
 	Cancelled int
 }
