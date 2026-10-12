@@ -31,6 +31,8 @@ func main() {
 	remindersInterval := flag.Duration("reminders-interval", 5*time.Minute,
 		"How often the session-reminder worker scans for due reminders. Set to 0 to disable.")
 	logLevel := flag.String("log-level", "info", "Log level: debug|info|warn|error")
+	maxBodyBytes := flag.Int64("max-body-bytes", 10<<20,
+		"Maximum request body size in bytes (DoS guard). Covers receipt uploads; 0 disables the cap.")
 	flag.Parse()
 
 	logging.Setup(parseLevel(*logLevel))
@@ -104,10 +106,29 @@ func main() {
 	}
 
 	srv := httpapi.NewServer(d, files, fb)
+	srv.MaxBodyBytes = *maxBodyBytes
+	// CORS allow-list for production. Comma-separated origins, e.g.
+	// "https://app.kickstand.example". Empty → dev mode (localhost only).
+	if origins := os.Getenv("KS_CORS_ALLOWED_ORIGINS"); origins != "" {
+		srv.CORSAllowedOrigins = splitAndTrim(origins)
+		log.Info("cors: production allow-list", slog.Any("origins", srv.CORSAllowedOrigins))
+	} else {
+		log.Info("cors: dev mode (localhost origins only)",
+			slog.String("hint", "set KS_CORS_ALLOWED_ORIGINS to your web origin(s) in production"))
+	}
+
 	httpSrv := &http.Server{
-		Addr:              *addr,
-		Handler:           srv.Routes(),
+		Addr:    *addr,
+		Handler: srv.Routes(),
+		// Timeouts bound how long a single connection can tie up a goroutine,
+		// closing the slow-body / idle-keep-alive exhaustion gap that
+		// ReadHeaderTimeout alone leaves open. ReadTimeout is generous enough
+		// for a receipt upload over a slow mobile link; WriteTimeout covers a
+		// large data-export response.
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	// Scheduled reminders worker. Runs in-process — one binary, no extra
@@ -180,4 +201,16 @@ func parseLevel(s string) slog.Level {
 	default:
 		return slog.LevelInfo
 	}
+}
+
+// splitAndTrim parses a comma-separated env value into a clean slice,
+// dropping empty entries and surrounding whitespace.
+func splitAndTrim(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

@@ -262,31 +262,90 @@ func withRecover(next http.Handler) http.Handler {
 	})
 }
 
-// withCORS allows the Flutter Web dev build to talk to the Go server from
-// another origin. Permissive in dev (reflects any Origin); for production
-// we'd want a real allowlist.
+// withCORS lets a browser-served Flutter build talk to the Go server from
+// another origin. It fails closed: an Origin is reflected back (with
+// credentials) only when it's explicitly allow-listed, or — when no
+// allow-list is configured — when it's a localhost origin so the dev loop
+// keeps working out of the box. A production deploy MUST set
+// KS_CORS_ALLOWED_ORIGINS to its real web origin(s); an unknown origin
+// simply receives no CORS headers and the browser blocks the response.
 //
 // The Authorization header is explicitly listed in Allow-Headers — browsers
 // don't include it in the default safelist, so without this the bearer
 // token never reaches us on cross-origin requests.
-func withCORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if origin != "" {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Vary", "Origin")
+func withCORS(allowedOrigins []string) func(http.Handler) http.Handler {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		if o = strings.TrimSpace(o); o != "" {
+			allowed[o] = struct{}{}
 		}
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Max-Age", "86400")
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			if origin != "" && corsOriginAllowed(origin, allowed) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Set("Vary", "Origin")
+			}
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Max-Age", "86400")
 
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// corsOriginAllowed decides whether an Origin may be reflected. An explicit
+// allow-list entry always wins. With no allow-list configured we permit
+// localhost (any scheme/port) so `make app-run` works without ceremony, but
+// never a remote origin — that keeps a misconfigured production deploy from
+// silently reflecting every caller.
+func corsOriginAllowed(origin string, allowed map[string]struct{}) bool {
+	if _, ok := allowed[origin]; ok {
+		return true
+	}
+	if len(allowed) > 0 {
+		return false
+	}
+	return isLocalhostOrigin(origin)
+}
+
+func isLocalhostOrigin(origin string) bool {
+	host := origin
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
+	// Bracketed IPv6 literal (e.g. [::1]:9000): the host runs to the ']'.
+	if strings.HasPrefix(host, "[") {
+		if i := strings.IndexByte(host, ']'); i >= 0 {
+			host = host[:i+1]
 		}
-		next.ServeHTTP(w, r)
-	})
+	} else if i := strings.IndexByte(host, ':'); i >= 0 {
+		host = host[:i]
+	}
+	return host == "localhost" || host == "127.0.0.1" || host == "[::1]"
+}
+
+// withMaxBytes caps the request body so a single oversized (or slow-drip)
+// payload can't exhaust server memory. net/http's MaxBytesReader makes the
+// next Read past the limit return an error, which the handler surfaces as a
+// 4xx rather than reading gigabytes into memory. Generous enough for receipt
+// uploads; tune via the server's max-body-bytes flag.
+func withMaxBytes(limit int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if limit > 0 && r.Body != nil {
+				r.Body = http.MaxBytesReader(w, r.Body, limit)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 type statusRecorder struct {

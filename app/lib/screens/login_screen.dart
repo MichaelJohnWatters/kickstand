@@ -45,8 +45,10 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
-  final _email = TextEditingController(text: 'alex@test');
-  final _password = TextEditingController(text: 'password');
+  // Prefill demo credentials in debug builds only — never ship a working
+  // login prefilled in a release build.
+  final _email = TextEditingController(text: kDebugMode ? 'alex@test' : '');
+  final _password = TextEditingController(text: kDebugMode ? 'password' : '');
   bool _obscure = true;
 
   @override

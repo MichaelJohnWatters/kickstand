@@ -26,16 +26,28 @@ import (
 	"github.com/michaeljohnwatters/kickstand/internal/filestore"
 )
 
+// defaultMaxBodyBytes caps request bodies when the caller doesn't set one.
+// 10 MiB comfortably covers a phone-camera receipt photo while keeping a
+// single request's memory bounded.
+const defaultMaxBodyBytes = 10 << 20
+
 // Server holds the dependencies handlers need. Keep this struct flat — it's
 // the dependency-injection surface for handlers.
 type Server struct {
 	DB       *sql.DB
 	Files    filestore.Store      // receipt blobs (and any future file types)
 	Firebase *auth.FirebaseClient // nil when running without Firebase Auth (tests, legacy `make run` target).
+
+	// MaxBodyBytes caps every request body (see withMaxBytes). Zero means
+	// use defaultMaxBodyBytes; a negative value disables the cap.
+	MaxBodyBytes int64
+	// CORSAllowedOrigins is the production CORS allow-list. Empty means
+	// dev mode (localhost origins only — see withCORS).
+	CORSAllowedOrigins []string
 }
 
 func NewServer(d *sql.DB, files filestore.Store, fb *auth.FirebaseClient) *Server {
-	return &Server{DB: d, Files: files, Firebase: fb}
+	return &Server{DB: d, Files: files, Firebase: fb, MaxBodyBytes: defaultMaxBodyBytes}
 }
 
 // RoutePattern describes a single route mount-point. Exported so tests
@@ -293,9 +305,10 @@ func (s *Server) Routes() http.Handler {
 		}
 		mux.Handle(r.method+" "+r.pattern, h)
 	}
-	// Cross-cutting: CORS → log → recover, all wrapping the mux. Order matters:
-	// CORS must be outermost so preflights short-circuit before logging.
-	return withCORS(withRecover(s.withLog(mux)))
+	// Cross-cutting, outermost → innermost: CORS → recover → log → body-cap →
+	// mux. CORS is outermost so preflights short-circuit before anything else;
+	// the body cap sits just above the handlers so every body read is bounded.
+	return withCORS(s.CORSAllowedOrigins)(withRecover(s.withLog(withMaxBytes(s.MaxBodyBytes)(mux))))
 }
 
 func healthCheck(w http.ResponseWriter, r *http.Request) {
