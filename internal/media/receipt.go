@@ -35,6 +35,13 @@ const MaxLongEdge = 1600
 // — the manager list paints a small square chip per row.
 const ThumbEdge = 50
 
+// MaxPixels caps the declared dimensions (width × height) we'll decode. A
+// decompression bomb is a tiny file declaring enormous dimensions; decoding
+// allocates ~width*height*4 bytes, so an unbounded image OOMs the process.
+// 50 MP comfortably clears any real phone camera (48 MP flagships included)
+// while blocking the bomb case.
+const MaxPixels = 50_000_000
+
 // MainQuality / ThumbQuality are the JPEG encoder qualities. 80 is the
 // "no visible artefacts at typical screen DPI" sweet spot; 60 is the
 // thumb sweet spot (the visible cell is tiny so artefacts blend in).
@@ -56,7 +63,22 @@ type Processed struct {
 // and re-encodes both as JPEG. Returns ErrUnsupported when the upload
 // isn't a format we can decode.
 func ProcessReceipt(r io.Reader) (*Processed, error) {
-	src, _, err := image.Decode(r)
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("read upload: %w", err)
+	}
+	// Guard against decompression bombs BEFORE decoding: DecodeConfig reads
+	// only the header, so we can reject an image whose declared dimensions
+	// would blow up memory without ever materialising the pixel buffer.
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnsupported, err)
+	}
+	if int64(cfg.Width)*int64(cfg.Height) > MaxPixels {
+		return nil, fmt.Errorf("%w: %d×%d exceeds %d megapixels",
+			ErrTooLarge, cfg.Width, cfg.Height, MaxPixels/1_000_000)
+	}
+	src, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnsupported, err)
 	}

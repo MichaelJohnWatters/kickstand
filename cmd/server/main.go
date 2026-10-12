@@ -33,6 +33,10 @@ func main() {
 	logLevel := flag.String("log-level", "info", "Log level: debug|info|warn|error")
 	maxBodyBytes := flag.Int64("max-body-bytes", 10<<20,
 		"Maximum request body size in bytes (DoS guard). Covers receipt uploads; 0 disables the cap.")
+	signupRatePerMin := flag.Int("signup-rate-per-min", 10,
+		"Per-IP signup requests allowed per minute (abuse guard). 0 disables the limiter.")
+	signupBurst := flag.Int("signup-burst", 5,
+		"Per-IP burst capacity for the signup rate limiter.")
 	flag.Parse()
 
 	logging.Setup(parseLevel(*logLevel))
@@ -115,6 +119,13 @@ func main() {
 	} else {
 		log.Info("cors: dev mode (localhost origins only)",
 			slog.String("hint", "set KS_CORS_ALLOWED_ORIGINS to your web origin(s) in production"))
+	}
+	srv.EnableSignupRateLimit(*signupRatePerMin, *signupBurst)
+	if *signupRatePerMin > 0 {
+		log.Info("signup rate limit enabled",
+			slog.Int("per_min", *signupRatePerMin), slog.Int("burst", *signupBurst))
+	} else {
+		log.Info("signup rate limit disabled")
 	}
 
 	httpSrv := &http.Server{

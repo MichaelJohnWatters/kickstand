@@ -67,6 +67,11 @@ func (s *Server) handleRecordBikeExpense(w http.ResponseWriter, r *http.Request)
 				"receipt must be a JPEG, PNG, or GIF")
 			return
 		}
+		if errors.Is(err, media.ErrTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "image_too_large",
+				"receipt image dimensions are too large")
+			return
+		}
 		writeInternal(w, r, "image_process_failed", err)
 		return
 	}

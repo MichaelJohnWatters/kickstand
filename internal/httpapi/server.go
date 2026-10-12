@@ -44,6 +44,10 @@ type Server struct {
 	// CORSAllowedOrigins is the production CORS allow-list. Empty means
 	// dev mode (localhost origins only — see withCORS).
 	CORSAllowedOrigins []string
+	// SignupRateLimiter, when set, caps per-IP request rate on the public
+	// self-signup route. Nil disables it (the default, so tests aren't
+	// throttled); main.go wires one up for production.
+	SignupRateLimiter *ipRateLimiter
 }
 
 func NewServer(d *sql.DB, files filestore.Store, fb *auth.FirebaseClient) *Server {
@@ -66,6 +70,11 @@ type routeSpec struct {
 	public  bool
 	handler http.HandlerFunc
 }
+
+// signupRoutePattern is the one public route we rate-limit (abuse-prone
+// self-signup). Matched by pattern in the mount loop rather than flagged on
+// routeSpec so the ~140 positional route literals stay untouched.
+const signupRoutePattern = "/auth/firebase-signup"
 
 // RouteTable returns the (method, pattern, public) triples for every
 // route the server mounts. Used by auth-coverage tests to enumerate
@@ -302,6 +311,12 @@ func (s *Server) Routes() http.Handler {
 		h := http.Handler(r.handler)
 		if !r.public {
 			h = authMW(h)
+		}
+		// Rate-limit the abuse-prone public signup route when a limiter is
+		// configured. Innermost of the per-route wrappers so a 429 is decided
+		// before the handler runs (and, for signup, before auth would be).
+		if r.pattern == signupRoutePattern && s.SignupRateLimiter != nil {
+			h = s.SignupRateLimiter.middleware(h)
 		}
 		mux.Handle(r.method+" "+r.pattern, h)
 	}

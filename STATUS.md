@@ -21,6 +21,13 @@ Last updated: 2026-10-12 (security hardening + logic-review follow-ups)
 >   by `user_id`.
 > - **Flutter** — demo-credential login prefill is now `kDebugMode`-gated
 >   (release builds ship an empty form).
+> - **Upload pixel-bomb guard** — `media.ProcessReceipt` checks declared
+>   dimensions via `DecodeConfig` (MaxPixels = 50 MP) before decoding, so a
+>   tiny file declaring enormous dimensions is rejected (413) rather than
+>   OOM-ing on decode.
+> - **Signup rate limit** — per-IP token-bucket on `POST /auth/firebase-signup`
+>   (`-signup-rate-per-min`, `-signup-burst`; defaults 10/min, burst 5).
+>   Defence-in-depth over Firebase's own throttle; off in tests by default.
 >
 > A logic review (2026-10-12) verified the booking/disruption/ledger/seed/
 > reminders engines against these docs: **no behavioural bugs found**. It added
