@@ -27,7 +27,7 @@ func (s *Server) handleListDisruptions(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := booking.ListDisruptions(r.Context(), scope, openOnly)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 

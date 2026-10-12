@@ -54,7 +54,7 @@ func (s *Server) handleMyStudentProfile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

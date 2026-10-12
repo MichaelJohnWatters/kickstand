@@ -47,7 +47,7 @@ func (s *Server) handleAnalyticsBikeUtilisation(w http.ResponseWriter, r *http.R
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	rows, err := analytics.BikeUtilisation(r.Context(), scope, win)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "analytics_failed", err.Error())
+		writeInternal(w, r, "analytics_failed", err)
 		return
 	}
 	out := make([]map[string]any, 0, len(rows))
@@ -84,7 +84,7 @@ func (s *Server) handleAnalyticsInstructorUtilisation(w http.ResponseWriter, r *
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	rows, err := analytics.InstructorUtilisation(r.Context(), scope, win)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "analytics_failed", err.Error())
+		writeInternal(w, r, "analytics_failed", err)
 		return
 	}
 	out := make([]map[string]any, 0, len(rows))
@@ -121,7 +121,7 @@ func (s *Server) handleAnalyticsFunnel(w http.ResponseWriter, r *http.Request) {
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	fs, err := analytics.Funnel(r.Context(), scope, win)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "analytics_failed", err.Error())
+		writeInternal(w, r, "analytics_failed", err)
 		return
 	}
 	perInstr := make([]map[string]any, 0, len(fs.PerInstructorPassRate))

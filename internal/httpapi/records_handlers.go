@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -353,12 +354,12 @@ func (s *Server) handleGetStudentDetail(w http.ResponseWriter, r *http.Request) 
 	// Financial
 	bal, err := ledger.GetStudentBalance(r.Context(), scope, studentID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "balance: "+err.Error())
+		writeInternal(w, r, "internal_error", fmt.Errorf("balance: %w", err))
 		return
 	}
 	entries, err := ledger.GetStudentLedger(r.Context(), scope, studentID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "ledger: "+err.Error())
+		writeInternal(w, r, "internal_error", fmt.Errorf("ledger: %w", err))
 		return
 	}
 

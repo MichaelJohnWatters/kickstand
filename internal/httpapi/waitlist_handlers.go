@@ -35,7 +35,7 @@ func (s *Server) handleJoinWaitlist(w http.ResponseWriter, r *http.Request) {
 			errors.Is(err, booking.ErrSessionNotBookable):
 			writeError(w, http.StatusConflict, "not_bookable", err.Error())
 		default:
-			writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+			writeInternal(w, r, "internal_error", err)
 		}
 		return
 	}
@@ -80,7 +80,7 @@ func (s *Server) handleLeaveWaitlist(w http.ResponseWriter, r *http.Request) {
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	if err := booking.LeaveWaitlist(r.Context(), scope,
 		domain.SessionID(r.PathValue("id")), id.UserID); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -97,7 +97,7 @@ func (s *Server) handleListWaitlist(w http.ResponseWriter, r *http.Request) {
 	out, err := booking.ListWaitlist(r.Context(), scope,
 		domain.SessionID(r.PathValue("id")))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	rows := make([]map[string]any, 0, len(out))
@@ -126,7 +126,7 @@ func (s *Server) handleMyWaitlist(w http.ResponseWriter, r *http.Request) {
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	out, err := booking.MyWaitlistEntries(r.Context(), scope, id.UserID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	rows := make([]map[string]any, 0, len(out))

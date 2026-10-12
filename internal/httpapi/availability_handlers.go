@@ -109,20 +109,26 @@ func (s *Server) handleCreateRecurringAvailability(w http.ResponseWriter, r *htt
 
 func (s *Server) handleDeleteRecurringAvailability(w http.ResponseWriter, r *http.Request) {
 	id, _ := identityFromContext(r.Context())
-	scope := tenant.NewScope(s.DB, id.SchoolID)
-	// We don't know whose slot it is without a lookup. Cheap approach: try
-	// to delete; the data layer enforces tenant. To gate per-instructor we'd
-	// need to load + check. For MVP, allow any staff to delete within their
-	// school — admin or the instructor themself.
 	if id.Role == domain.RoleStudent {
 		writeError(w, http.StatusForbidden, "forbidden", "staff only")
 		return
 	}
-	if err := availability.DeleteRecurringSlot(r.Context(), scope, domain.AvailabilityID(r.PathValue("slotId"))); err != nil {
+	scope := tenant.NewScope(s.DB, id.SchoolID)
+	if err := availability.DeleteRecurringSlot(r.Context(), scope, domain.AvailabilityID(r.PathValue("slotId")), ownerGuard(id)); err != nil {
 		writeAvailabilityError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ownerGuard returns the instructor-ownership filter for a delete: an
+// instructor may only act on their own rows, while admin/owner (empty guard)
+// may act on any instructor's rows in the school.
+func ownerGuard(id *auth.Identity) domain.UserID {
+	if id.Role == domain.RoleInstructor {
+		return id.UserID
+	}
+	return ""
 }
 
 // ----- Time off -----
@@ -203,7 +209,7 @@ func (s *Server) handleDeleteTimeOff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := tenant.NewScope(s.DB, id.SchoolID)
-	if err := availability.DeleteTimeOff(r.Context(), scope, domain.TimeOffID(r.PathValue("timeOffId"))); err != nil {
+	if err := availability.DeleteTimeOff(r.Context(), scope, domain.TimeOffID(r.PathValue("timeOffId")), ownerGuard(id)); err != nil {
 		writeAvailabilityError(w, err)
 		return
 	}

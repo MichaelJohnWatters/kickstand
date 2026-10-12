@@ -31,7 +31,7 @@ func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, total, err := audit.List(r.Context(), s.DB, id.SchoolID, f)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	out := make([]map[string]any, 0, len(rows))

@@ -540,7 +540,7 @@ func (s *Server) handleAssignBookingBike(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusConflict, "bike_not_suitable",
 				"this bike doesn't fit the session (category, transmission or already in use)")
 		default:
-			writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+			writeInternal(w, r, "internal_error", err)
 		}
 		return
 	}

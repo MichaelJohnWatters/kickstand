@@ -65,7 +65,7 @@ func (s *Server) handleListStudents(w http.ResponseWriter, r *http.Request) {
 		string(scope.SchoolID()), q, like, like,
 	)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	defer rows.Close()
@@ -83,7 +83,7 @@ func (s *Server) handleListStudents(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&uid, &name, &email, &phone, &status,
 			&licCat, &trans, &cbtHeld, &theoryPassed,
 			&balance, &completed, &flagCount, &passed); err != nil {
-			writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+			writeInternal(w, r, "internal_error", err)
 			return
 		}
 		out = append(out, map[string]any{

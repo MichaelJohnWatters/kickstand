@@ -3,11 +3,13 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/michaeljohnwatters/kickstand/internal/auth"
 	"github.com/michaeljohnwatters/kickstand/internal/booking"
 	"github.com/michaeljohnwatters/kickstand/internal/expenses"
+	"github.com/michaeljohnwatters/kickstand/internal/logging"
 )
 
 // errorBody is the wire shape for every error response.
@@ -27,6 +29,19 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, errorBody{Error: code, Message: message})
+}
+
+// writeInternal records a genuinely-internal failure. The underlying error
+// (which may carry SQL/driver/filesystem detail) is logged server-side with
+// request context and never sent to the client — the caller only sees the
+// stable code and a generic message. Use this for every 500; use writeError
+// directly only for client-facing 4xx messages.
+func writeInternal(w http.ResponseWriter, r *http.Request, code string, err error) {
+	logging.FromContext(r.Context()).Error("internal error",
+		slog.String("code", code),
+		slog.String("err", err.Error()),
+	)
+	writeError(w, http.StatusInternalServerError, code, "an internal error occurred")
 }
 
 // writeEngineError maps a known engine/auth error to an HTTP status + code.

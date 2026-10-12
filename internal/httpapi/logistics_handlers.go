@@ -33,7 +33,7 @@ func (s *Server) handleLogistics(w http.ResponseWriter, r *http.Request) {
 
 	sum, err := logistics.SummaryForDay(r.Context(), scope, day)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 

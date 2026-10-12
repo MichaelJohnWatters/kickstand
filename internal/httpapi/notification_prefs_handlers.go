@@ -16,7 +16,7 @@ func (s *Server) handleGetNotificationPrefs(w http.ResponseWriter, r *http.Reque
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	prefs, err := notify.GetPrefs(r.Context(), scope, id.UserID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "prefs_failed", err.Error())
+		writeInternal(w, r, "prefs_failed", err)
 		return
 	}
 	out := make([]map[string]any, 0, len(prefs))

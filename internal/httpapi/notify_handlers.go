@@ -29,7 +29,7 @@ func (s *Server) handleListMyNotifications(w http.ResponseWriter, r *http.Reques
 
 	res, err := notify.List(r.Context(), scope, id.UserID, limit, unreadOnly)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 
@@ -60,7 +60,7 @@ func (s *Server) handleMarkNotificationRead(w http.ResponseWriter, r *http.Reque
 	id, _ := identityFromContext(r.Context())
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	if err := notify.MarkRead(r.Context(), scope, id.UserID, domain.NotificationID(r.PathValue("id"))); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -71,7 +71,7 @@ func (s *Server) handleMarkAllNotificationsRead(w http.ResponseWriter, r *http.R
 	id, _ := identityFromContext(r.Context())
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	if err := notify.MarkAllRead(r.Context(), scope, id.UserID); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -103,8 +103,8 @@ func (s *Server) handleRegisterDeviceToken(w http.ResponseWriter, r *http.Reques
 func (s *Server) handleUnregisterDeviceToken(w http.ResponseWriter, r *http.Request) {
 	id, _ := identityFromContext(r.Context())
 	scope := tenant.NewScope(s.DB, id.SchoolID)
-	if err := notify.UnregisterDevice(r.Context(), scope, r.PathValue("token")); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+	if err := notify.UnregisterDevice(r.Context(), scope, id.UserID, r.PathValue("token")); err != nil {
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

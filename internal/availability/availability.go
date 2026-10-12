@@ -104,10 +104,20 @@ func ListRecurringSlots(ctx context.Context, scope *tenant.Scope, instructorID d
 	return out, rows.Err()
 }
 
-func DeleteRecurringSlot(ctx context.Context, scope *tenant.Scope, id domain.AvailabilityID) error {
-	res, err := scope.Conn().ExecContext(ctx,
-		`DELETE FROM instructor_recurring_availability WHERE id = ? AND school_id = ?`,
-		string(id), string(scope.SchoolID()))
+// DeleteRecurringSlot removes a slot within the caller's school. When
+// expectedInstructor is non-empty the delete also requires the slot to belong
+// to that instructor; a mismatch reports ErrNotFound rather than leaking that
+// the row exists (mirrors booking's ExpectedStudentID ownership guard). Pass
+// an empty expectedInstructor for admin/owner callers, who may delete any
+// instructor's slot in the school.
+func DeleteRecurringSlot(ctx context.Context, scope *tenant.Scope, id domain.AvailabilityID, expectedInstructor domain.UserID) error {
+	query := `DELETE FROM instructor_recurring_availability WHERE id = ? AND school_id = ?`
+	args := []any{string(id), string(scope.SchoolID())}
+	if expectedInstructor != "" {
+		query += ` AND instructor_id = ?`
+		args = append(args, string(expectedInstructor))
+	}
+	res, err := scope.Conn().ExecContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
@@ -187,10 +197,16 @@ func ListTimeOff(ctx context.Context, scope *tenant.Scope, instructorID domain.U
 	return out, rows.Err()
 }
 
-func DeleteTimeOff(ctx context.Context, scope *tenant.Scope, id domain.TimeOffID) error {
-	res, err := scope.Conn().ExecContext(ctx,
-		`DELETE FROM instructor_time_off WHERE id = ? AND school_id = ?`,
-		string(id), string(scope.SchoolID()))
+// DeleteTimeOff removes a time-off block within the caller's school. See
+// DeleteRecurringSlot for the expectedInstructor ownership-guard semantics.
+func DeleteTimeOff(ctx context.Context, scope *tenant.Scope, id domain.TimeOffID, expectedInstructor domain.UserID) error {
+	query := `DELETE FROM instructor_time_off WHERE id = ? AND school_id = ?`
+	args := []any{string(id), string(scope.SchoolID())}
+	if expectedInstructor != "" {
+		query += ` AND instructor_id = ?`
+		args = append(args, string(expectedInstructor))
+	}
+	res, err := scope.Conn().ExecContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}

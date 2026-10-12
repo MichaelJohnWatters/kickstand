@@ -19,7 +19,7 @@ func (s *Server) handleListClosures(w http.ResponseWriter, r *http.Request) {
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	out, err := closures.List(r.Context(), scope)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	rows := make([]map[string]any, 0, len(out))
@@ -69,7 +69,7 @@ func (s *Server) handleCreateClosure(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_input", err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	if c.FromDate == c.ToDate {
@@ -99,7 +99,7 @@ func (s *Server) handleDeleteClosure(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	audit.Describe(r.Context(), "Removed a closure")

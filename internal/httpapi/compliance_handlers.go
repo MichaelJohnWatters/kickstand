@@ -21,7 +21,7 @@ func (s *Server) handleGetCompliance(w http.ResponseWriter, r *http.Request) {
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	rep, err := compliance.Load(r.Context(), scope)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	bikes := make([]map[string]any, 0, len(rep.Bikes))

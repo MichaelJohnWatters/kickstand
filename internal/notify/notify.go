@@ -426,9 +426,12 @@ func RegisterDevice(ctx context.Context, scope *tenant.Scope, req RegisterDevice
 	return err
 }
 
-func UnregisterDevice(ctx context.Context, scope *tenant.Scope, token string) error {
+// UnregisterDevice removes a device token owned by the given user. Scoping to
+// user_id (not just school_id) stops one user from unregistering another
+// same-school user's push token if they ever learn it.
+func UnregisterDevice(ctx context.Context, scope *tenant.Scope, userID domain.UserID, token string) error {
 	_, err := scope.Conn().ExecContext(ctx,
-		`DELETE FROM device_tokens WHERE token = ? AND school_id = ?`,
-		token, string(scope.SchoolID()))
+		`DELETE FROM device_tokens WHERE token = ? AND school_id = ? AND user_id = ?`,
+		token, string(scope.SchoolID()), string(userID))
 	return err
 }

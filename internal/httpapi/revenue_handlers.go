@@ -21,17 +21,17 @@ func (s *Server) handleGetRevenue(w http.ResponseWriter, r *http.Request) {
 	months, _ := strconv.Atoi(r.URL.Query().Get("months"))
 	monthly, err := revenue.Monthly(r.Context(), scope, months)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	ageing, err := revenue.Ageing(r.Context(), scope)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	byCourse, err := revenue.ByCourse(r.Context(), scope)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 

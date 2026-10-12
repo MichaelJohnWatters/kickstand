@@ -24,7 +24,7 @@ func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	out, err := templates.List(r.Context(), scope)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -73,7 +73,7 @@ func (s *Server) handleCreateTemplate(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_input", err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	audit.Describe(r.Context(),
@@ -95,7 +95,7 @@ func (s *Server) handleDeleteTemplate(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -119,7 +119,7 @@ func (s *Server) handleMaterialiseTemplates(w http.ResponseWriter, r *http.Reque
 	to := from.AddDate(0, 0, 7*weeks)
 	res, err := templates.Materialise(r.Context(), scope, from, to, id.UserID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	if res.CreatedCount == 0 {
@@ -165,7 +165,7 @@ func (s *Server) handleMaterialiseOneTemplate(w http.ResponseWriter, r *http.Req
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	// Look up the template's course code for a tidy audit line.
@@ -204,7 +204,7 @@ func (s *Server) handleListMaterialisations(w http.ResponseWriter, r *http.Reque
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	out, err := templates.ListMaterialisations(r.Context(), scope)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	rows := make([]map[string]any, 0, len(out))
@@ -250,7 +250,7 @@ func (s *Server) handleUndoMaterialisation(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusConflict, "has_bookings",
 				"some generated sessions already have bookings — cancel them first")
 		default:
-			writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+			writeInternal(w, r, "internal_error", err)
 		}
 		return
 	}
@@ -281,7 +281,7 @@ func (s *Server) handlePreviewTemplate(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"newSessions": n})

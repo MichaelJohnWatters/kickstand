@@ -211,7 +211,7 @@ func (s *Server) handleDismissPastDisruptions(w http.ResponseWriter, r *http.Req
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	res, err := booking.DismissPastPendingDisruptions(r.Context(), scope, id.UserID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	if res.Cancelled > 0 {

@@ -102,14 +102,14 @@ func (s *Server) handleSubmitExpense(w http.ResponseWriter, r *http.Request) {
 				"receipt must be a JPEG, PNG, or GIF")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "image_process_failed", err.Error())
+		writeInternal(w, r, "image_process_failed", err)
 		return
 	}
 
 	expID := domain.ExpenseID(domain.NewID())
 	key := fmt.Sprintf("expenses/%s/receipt.jpg", expID)
 	if _, err := s.Files.Put(key, bytes.NewReader(processed.Main)); err != nil {
-		writeError(w, http.StatusInternalServerError, "store_failed", err.Error())
+		writeInternal(w, r, "store_failed", err)
 		return
 	}
 

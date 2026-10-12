@@ -51,7 +51,7 @@ func (s *Server) handleCalendar(w http.ResponseWriter, r *http.Request) {
 
 	payload, err := calendar.Build(r.Context(), scope, q)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 

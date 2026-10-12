@@ -31,7 +31,7 @@ func (s *Server) handleMyDataExport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "user not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeInternal(w, r, "internal_error", err)
 		return
 	}
 	w.Header().Set("Content-Disposition", `attachment; filename="kickstand-data-export.json"`)
@@ -72,7 +72,7 @@ func (s *Server) handleAnonymiseUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "already_anonymised",
 				"this user has already been anonymised")
 		default:
-			writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+			writeInternal(w, r, "internal_error", err)
 		}
 		return
 	}
