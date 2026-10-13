@@ -3,6 +3,7 @@
 build:
 	go build -o bin/server ./cmd/server
 	go build -o bin/seed ./cmd/seed
+	go build -o bin/provision ./cmd/provision
 	go build -o bin/teltonika-adapter ./cmd/teltonika-adapter
 	go build -o bin/gps-simulator ./cmd/gps-simulator
 
