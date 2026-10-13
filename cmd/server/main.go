@@ -128,6 +128,20 @@ func main() {
 		log.Info("signup rate limit disabled")
 	}
 
+	// Dedicated single-tenant instance: pin all signups to one school.
+	if pin := os.Getenv("KS_SINGLE_TENANT_SCHOOL_ID"); pin != "" {
+		srv.SingleTenantSchoolID = pin
+		var exists int
+		if err := d.QueryRowContext(rootCtx,
+			`SELECT 1 FROM schools WHERE id = ?`, pin).Scan(&exists); err != nil {
+			log.Warn("tenancy: single-tenant school not found yet — run `provision` for it",
+				slog.String("school_id", pin))
+		}
+		log.Info("tenancy: single-tenant (pinned)", slog.String("school_id", pin))
+	} else {
+		log.Info("tenancy: shared multi-tenant")
+	}
+
 	httpSrv := &http.Server{
 		Addr:    *addr,
 		Handler: srv.Routes(),

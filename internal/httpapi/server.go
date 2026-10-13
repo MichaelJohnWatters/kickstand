@@ -48,6 +48,12 @@ type Server struct {
 	// self-signup route. Nil disables it (the default, so tests aren't
 	// throttled); main.go wires one up for production.
 	SignupRateLimiter *ipRateLimiter
+	// SingleTenantSchoolID, when non-empty, pins this deployment to one
+	// school (a dedicated single-tenant instance): signup always attaches
+	// to this school regardless of the client-supplied id, and GET /schools
+	// advertises only it. Empty = shared multi-tenant. Set from
+	// KS_SINGLE_TENANT_SCHOOL_ID in main.go.
+	SingleTenantSchoolID string
 }
 
 func NewServer(d *sql.DB, files filestore.Store, fb *auth.FirebaseClient) *Server {

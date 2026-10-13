@@ -21,6 +21,10 @@ func (s *Server) handleListSchools(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(schools))
 	for _, sc := range schools {
+		// Dedicated single-tenant instance: advertise only its own school.
+		if s.SingleTenantSchoolID != "" && string(sc.ID) != s.SingleTenantSchoolID {
+			continue
+		}
 		out = append(out, map[string]any{
 			"id":     sc.ID,
 			"name":   sc.Name,
@@ -72,6 +76,11 @@ func (s *Server) handleFirebaseSignup(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_json", err.Error())
 		return
+	}
+	// Dedicated single-tenant instance: ignore whatever school the client
+	// sent and pin every signup to this deployment's one school.
+	if s.SingleTenantSchoolID != "" {
+		req.SchoolID = s.SingleTenantSchoolID
 	}
 	id, err := signup.SignupWithFirebase(r.Context(), s.DB, signup.FirebaseSignupRequest{
 		FirebaseUID:            tok.UID,
