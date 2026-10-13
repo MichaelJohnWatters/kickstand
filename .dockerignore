@@ -1,0 +1,20 @@
+# Keep the build context small and avoid baking local state / the Flutter
+# client (not needed to build the Go API) into the image.
+.git
+bin/
+dist/
+uploads/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+app/
+design_handoff_kickstand/
+deploy/secrets/
+.env
+.env.*
+firebase-debug.log
+firebase-debug.*.log
+*.test
+*.out
+.DS_Store

@@ -1,0 +1,7 @@
+# Caddy terminates TLS (automatic Let's Encrypt for {$KS_DOMAIN}) and proxies
+# to the Go API. Nothing else to configure — point KS_DOMAIN's DNS A/AAAA
+# record at this host and Caddy provisions + renews the certificate.
+{$KS_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy app:8765
+}

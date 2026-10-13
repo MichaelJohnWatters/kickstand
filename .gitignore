@@ -22,3 +22,6 @@
 # Firebase emulator log
 firebase-debug.log
 firebase-debug.*.log
+
+# Deploy secrets (service-account JSON etc.) — never commit these.
+deploy/secrets/

@@ -494,8 +494,22 @@ These are deferred deliberately, not bugs:
   binding flows. One IMEI → one bike id; horizontal scale by running
   multiple adapters. CRC verification deliberately deferred
   (TCP-already-CRC'd; can add when a real device is on hand).
-- **Real production deploy** — no Cloud Run / Cloudflare Pages config yet
-- **Real user testing** — only API smoke + unit tests; UI testing is the next step
+- **Real production deploy** — _portable Docker scaffold shipped 2026-10-13_:
+  `Dockerfile` (multi-stage, static CGO-free binary + embedded migrations) +
+  `deploy/docker-compose.yml` (API behind Caddy for automatic HTTPS) +
+  `deploy/.env.example` + `deploy/README.md`. Runs on any Docker host; SQLite
+  on a persistent volume (Postgres later). No live cloud deploy stood up yet,
+  and the image isn't CI-built (authored + its `CGO_ENABLED=0` build verified
+  locally; `docker build` not run here).
+- **Tenancy & provisioning** — _shipped 2026-10-13_. Shared multi-tenant is
+  the default (one deployment, schools isolated by `school_id`). `cmd/provision`
+  creates a real school + first owner (+ Firebase user) — the production
+  onboarding path, separate from the demo seed. A customer can get a
+  **dedicated single-tenant instance**: same image, own volume/domain/Firebase
+  project, with `KS_SINGLE_TENANT_SCHOOL_ID=<id>` pinning signup to its one
+  school. See `deploy/README.md`.
+- **Real user testing** — only API smoke + unit tests + a code-level UI review;
+  no human browser click-through yet (demo builds via `make web-demo`).
 - **Multi-role user** — a user can hold only one role today; plan acknowledged
   this and we'd add a `user_roles` join table when a real use case appears
 

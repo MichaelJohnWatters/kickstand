@@ -1,0 +1,65 @@
+# Portable deployment for the Kickstand API: the Go server behind Caddy,
+# which terminates TLS (automatic Let's Encrypt via KS_DOMAIN) and reverse-
+# proxies to it. Runs on any Docker host — a VPS, a Pi, Fly (as a machine),
+# or Cloud Run with a mounted volume.
+#
+# First run:
+#   cp .env.example .env     # then edit it
+#   mkdir -p secrets         # drop firebase-sa.json here (gitignored)
+#   docker compose up -d --build
+#
+# Provision the first school (see README):
+#   docker compose run --rm --entrypoint provision app \
+#     -dsn /data/kickstand.db -name "Acme Rider" -region NI \
+#     -owner-email owner@acme.example -owner-name "Owner" -owner-password '...'
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      # CORS allow-list — the web app origin(s). REQUIRED in prod: the API
+      # fails closed and rejects unknown origins.
+      - KS_CORS_ALLOWED_ORIGINS=${KS_CORS_ALLOWED_ORIGINS:-}
+      # Firebase Admin (token verification + provisioning user creation).
+      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      - FIREBASE_STORAGE_BUCKET=${FIREBASE_STORAGE_BUCKET:-}
+      # Dedicated single-tenant instance: pin to one school id. Empty = shared.
+      - KS_SINGLE_TENANT_SCHOOL_ID=${KS_SINGLE_TENANT_SCHOOL_ID:-}
+    volumes:
+      - kickstand-data:/data          # SQLite db + local receipt uploads
+      - ./secrets:/secrets:ro         # mount firebase-sa.json here (read-only)
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    expose:
+      - "8765"
+    # To run WITHOUT Caddy (e.g. behind an existing proxy), delete the caddy
+    # service below and publish the port directly:
+    # ports: ["8765:8765"]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - KS_DOMAIN=${KS_DOMAIN:?set KS_DOMAIN to your public hostname}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  kickstand-data:
+  caddy-data:
+  caddy-config:
