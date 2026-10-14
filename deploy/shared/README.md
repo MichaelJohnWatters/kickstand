@@ -27,15 +27,73 @@ use the single-app compose one level up in `deploy/`.)
     `yoga-school:8080`); change the port to whatever it listens on.
   - its own env + data-volume path in `docker-compose.yml`.
 
+## Provisioning the box (from scratch)
+
+A ~€5/mo VPS hosts both apps comfortably. Use an **EU/UK provider** for data
+residency (Hetzner CX22 is the usual pick; a UK host like Mythic Beasts/Krystal
+if data must sit on UK soil). Debian 12 / Ubuntu 24.04.
+
+**1. Create the server** in an EU/UK region. Add your SSH key at create time.
+
+**2. Harden + firewall** (SSH in as root first):
+```bash
+adduser deploy && usermod -aG sudo deploy          # non-root user
+rsync --archive --chown=deploy:deploy ~/.ssh /home/deploy   # copy your key
+# /etc/ssh/sshd_config: PermitRootLogin no, PasswordAuthentication no; then:
+systemctl restart ssh
+apt update && apt install -y ufw unattended-upgrades
+ufw allow OpenSSH && ufw allow 80 && ufw allow 443 && ufw --force enable
+```
+From here on, SSH as `deploy`.
+
+**3. Install Docker** (official convenience script, run on the box):
+```bash
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker deploy      # log out/in so `docker` works without sudo
+```
+
+**4. Clone both repos** onto the box (read-only deploy keys recommended):
+```bash
+mkdir ~/apps && cd ~/apps
+git clone git@github.com:MichaelJohnWatters/kickstand.git
+git clone git@github.com:MichaelJohnWatters/yoga-school.git
+```
+
+**5. Build yoga-school's image** (its source is its own repo; the shared compose
+runs it as a prebuilt image):
+```bash
+cd ~/apps/yoga-school
+docker build -f server/Dockerfile -t yoga-school:latest .
+```
+
+**6. DNS** — point both domains' `A` records at the box's public IP
+(`KS_DOMAIN` and `YOGA_DOMAIN`). Caddy needs these resolving before it can
+issue certs.
+
+Then run it (below). Kickstand is built by the compose; yoga runs the image
+from step 5.
+
 ## Run it
 
 ```bash
-cd deploy/shared
-cp .env.example .env          # set both domains + each app's env
+cd ~/apps/kickstand/deploy/shared
+cp .env.example .env          # set both domains + each app's env + YOGA_IMAGE=yoga-school:latest
 mkdir -p ../secrets           # drop firebase-sa.json here (shared with ../; gitignored)
 docker compose up -d --build
 docker compose logs -f caddy  # watch both certs get issued
 ```
+
+Verify: `curl -fsS https://$KS_DOMAIN/healthz` → `ok`, and `/readyz` → `ready`.
+
+## Updating + firewall notes
+
+```bash
+cd ~/apps/kickstand && git pull        # (and ~/apps/yoga-school; rebuild its image)
+cd deploy/shared && docker compose up -d --build   # recreates changed services
+```
+`/metrics` is unauthenticated — it's only reachable on the public domain via
+Caddy, so put it behind an allowlist in the Caddyfile (or a private network) if
+you don't want request volume public.
 
 Point `KS_DOMAIN` and `YOGA_DOMAIN` DNS at the host first; Caddy issues a
 Let's Encrypt cert per domain automatically.
