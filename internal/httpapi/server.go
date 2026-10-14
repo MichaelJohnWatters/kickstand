@@ -103,6 +103,8 @@ func (s *Server) routeTable() []routeSpec {
 		{"POST", "/auth/firebase-signup", true, s.handleFirebaseSignup},
 		{"GET", "/schools", true, s.handleListSchools},
 		{"GET", "/health", true, healthCheck},
+		{"GET", "/readyz", true, s.handleReadyz},
+		{"GET", "/metrics", true, handleMetrics},
 
 		// Identity + sessions
 		{"GET", "/me", false, s.handleMe},
@@ -329,7 +331,7 @@ func (s *Server) Routes() http.Handler {
 	// Cross-cutting, outermost → innermost: CORS → recover → log → body-cap →
 	// mux. CORS is outermost so preflights short-circuit before anything else;
 	// the body cap sits just above the handlers so every body read is bounded.
-	return withCORS(s.CORSAllowedOrigins)(withRecover(s.withLog(withMaxBytes(s.MaxBodyBytes)(mux))))
+	return withCORS(s.CORSAllowedOrigins)(withRecover(s.withLog(withMetrics(withMaxBytes(s.MaxBodyBytes)(mux)))))
 }
 
 func healthCheck(w http.ResponseWriter, r *http.Request) {

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -255,6 +256,13 @@ func withRecover(next http.Handler) http.Handler {
 					slog.Any("recovered", v),
 					slog.String("stack", string(debug.Stack())),
 				)
+				httpMetrics.panics.Add(1)
+				if ErrorReporter != nil {
+					// Best-effort, async: never let alerting block the response
+					// or re-panic the recover path.
+					detail := fmt.Sprintf("panic %s %s: %v", r.Method, r.URL.Path, v)
+					go func() { defer func() { _ = recover() }(); ErrorReporter(detail) }()
+				}
 				writeError(w, http.StatusInternalServerError, "internal_error", "an internal error occurred")
 			}
 		}()

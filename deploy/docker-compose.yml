@@ -36,6 +36,8 @@ services:
       - KS_EMAIL_FROM=${KS_EMAIL_FROM:-}
       - KS_EMAIL_FROM_NAME=${KS_EMAIL_FROM_NAME:-}
       - KS_EMAIL_LOG=${KS_EMAIL_LOG:-}
+      # Optional crash-alert webhook (Slack/Discord/collector).
+      - KS_ERROR_WEBHOOK=${KS_ERROR_WEBHOOK:-}
       # Dedicated single-tenant instance: pin to one school id. Empty = shared.
       - KS_SINGLE_TENANT_SCHOOL_ID=${KS_SINGLE_TENANT_SCHOOL_ID:-}
     volumes:

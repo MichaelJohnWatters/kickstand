@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -146,6 +147,10 @@ func main() {
 		log.Info("tenancy: shared multi-tenant")
 	}
 
+	// Optional crash-alert hook: POSTs panic details to KS_ERROR_WEBHOOK
+	// (Slack/Discord/collector). No-op if unset.
+	httpapi.ErrorReporter = buildErrorReporter(log)
+
 	httpSrv := &http.Server{
 		Addr:    *addr,
 		Handler: srv.Routes(),
@@ -257,6 +262,33 @@ func buildEmailSender(log *slog.Logger) email.Sender {
 		return email.LogSender{Log: log.With(slog.String("component", "email"))}
 	}
 	return nil
+}
+
+// buildErrorReporter returns a best-effort panic-alert hook posting to
+// KS_ERROR_WEBHOOK as {"text": "..."} (Slack/Discord-compatible), or nil when
+// unset. Called asynchronously by the recover middleware.
+func buildErrorReporter(log *slog.Logger) func(string) {
+	url := os.Getenv("KS_ERROR_WEBHOOK")
+	if url == "" {
+		return nil
+	}
+	log.Info("errors: webhook crash-alert enabled")
+	return func(detail string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		body := strings.NewReader(fmt.Sprintf(`{"text":%q}`, "Kickstand: "+detail))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+		if err != nil {
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			log.Warn("error webhook post failed", slog.String("err", err.Error()))
+			return
+		}
+		_ = resp.Body.Close()
+	}
 }
 
 // runEmailWorker drains the email outbox on startup and every interval.

@@ -125,3 +125,10 @@ to send booking confirmations, reminders, and cancellations via any SMTP relay.
 Without it, email notifications queue but aren't sent (in-app still works);
 `KS_EMAIL_LOG=1` logs them for dev. The worker drains the outbox every
 `-email-interval`.
+
+**Health & monitoring:** `GET /health` is liveness (process up); `GET /readyz`
+is readiness (DB reachable — point uptime checks / load balancers here);
+`GET /metrics` is minimal Prometheus-text request counters (aggregate only, no
+PII — firewall it off if you don't want request volume public). Set
+`KS_ERROR_WEBHOOK` to a Slack/Discord-style webhook to get a `{"text":...}`
+alert whenever a handler panics.
