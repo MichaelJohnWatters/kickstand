@@ -1,0 +1,13 @@
+# One Caddy, two apps, routed by hostname. Caddy provisions and renews a
+# Let's Encrypt cert per domain automatically — point each domain's DNS at
+# this host. Upstreams are compose service names on the shared network.
+
+{$KS_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy kickstand:8765
+}
+
+{$YOGA_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy {$YOGA_UPSTREAM}
+}

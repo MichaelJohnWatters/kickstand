@@ -1,0 +1,89 @@
+# Shared-host deployment: ONE Caddy fronting TWO apps on one box, routed by
+# hostname. Caddy terminates TLS (automatic Let's Encrypt) for both domains and
+# reverse-proxies each to its app container. Each app keeps its own volume.
+#
+# Use this instead of ../docker-compose.yml when you want both apps on one
+# machine. (The single-app compose one level up is still the right choice for a
+# dedicated single-tenant Kickstand instance on its own box.)
+#
+# kickstand is wired concretely (built from this repo). yoga-school is a
+# FILL-IN: point YOGA_IMAGE at its image and YOGA_UPSTREAM at its host:port —
+# its build/source lives in its own project.
+#
+#   cp .env.example .env     # edit both domains + each app's env
+#   mkdir -p ../secrets      # firebase-sa.json here (shared with single-app compose)
+#   docker compose up -d --build
+
+services:
+  kickstand:
+    build:
+      context: ../..          # the Kickstand repo root (this repo)
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - KS_CORS_ALLOWED_ORIGINS=${KS_CORS_ALLOWED_ORIGINS:-}
+      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      - FIREBASE_STORAGE_BUCKET=${FIREBASE_STORAGE_BUCKET:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - KS_EMAIL_FROM=${KS_EMAIL_FROM:-}
+      - KS_EMAIL_FROM_NAME=${KS_EMAIL_FROM_NAME:-}
+      - KS_EMAIL_LOG=${KS_EMAIL_LOG:-}
+      - KS_ERROR_WEBHOOK=${KS_ERROR_WEBHOOK:-}
+      - KS_SINGLE_TENANT_SCHOOL_ID=${KS_SINGLE_TENANT_SCHOOL_ID:-}
+    volumes:
+      - kickstand-data:/data
+      - ../secrets:/secrets:ro        # reuses deploy/secrets (gitignored)
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    expose:
+      - "8765"
+
+  # ---- FILL IN: your yoga-school app --------------------------------------
+  # Its source lives in its own project, so reference a prebuilt image (built
+  # and/or pushed separately) rather than build: here. Set YOGA_IMAGE and, if
+  # it listens on something other than 8080, YOGA_UPSTREAM (host:port) to match.
+  yoga-school:
+    image: ${YOGA_IMAGE:?set YOGA_IMAGE to the yoga-school container image}
+    restart: unless-stopped
+    environment:
+      # yoga-school's own env goes here.
+      - YOGA_ENV_EXAMPLE=${YOGA_ENV_EXAMPLE:-}
+    volumes:
+      - yoga-school-data:/data        # adjust to yoga-school's data path
+    expose:
+      - "${YOGA_INTERNAL_PORT:-8080}"
+    # healthcheck: add yoga-school's own health endpoint here.
+  # -------------------------------------------------------------------------
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - kickstand
+      - yoga-school
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - KS_DOMAIN=${KS_DOMAIN:?set KS_DOMAIN}
+      - YOGA_DOMAIN=${YOGA_DOMAIN:?set YOGA_DOMAIN}
+      # Upstream for yoga-school as seen on the compose network (service:port).
+      - YOGA_UPSTREAM=${YOGA_UPSTREAM:-yoga-school:8080}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  kickstand-data:
+  yoga-school-data:
+  caddy-data:
+  caddy-config:
