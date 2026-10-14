@@ -1,4 +1,4 @@
-.PHONY: build test test-noemu run seed seed-firebase backend demo-data web-demo marketing-demo clean tidy app-deps app-analyze app-web app-run emulator run-firebase backup
+.PHONY: build test test-noemu run seed seed-firebase backend demo-data web-demo marketing-demo clean tidy app-deps app-analyze app-web app-run emulator run-firebase backup firebase-smoke
 
 build:
 	go build -o bin/server ./cmd/server
@@ -12,6 +12,11 @@ build:
 # is going. Writes to ./backups/kickstand-<timestamp>.db.
 backup:
 	go run ./cmd/backup -dsn kickstand.db
+
+# Smoke-test a REAL Firebase config (not the emulator). Requires
+# FIREBASE_PROJECT_ID + GOOGLE_APPLICATION_CREDENTIALS. See deploy/firebase-setup.md.
+firebase-smoke:
+	./scripts/firebase-smoke.sh
 
 # Full test suite — every httpapi test goes through the Firebase Auth
 # emulator (Phase 1 of firebase-auth-migration.md). Receipt round-trip
