@@ -12,6 +12,8 @@
 *.db-journal
 *.db-wal
 *.db-shm
+# Local DB snapshots from `make backup` / cmd/backup.
+/backups/
 *.test
 *.out
 .env

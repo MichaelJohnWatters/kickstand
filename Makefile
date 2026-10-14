@@ -1,11 +1,17 @@
-.PHONY: build test test-noemu run seed seed-firebase backend demo-data web-demo marketing-demo clean tidy app-deps app-analyze app-web app-run emulator run-firebase
+.PHONY: build test test-noemu run seed seed-firebase backend demo-data web-demo marketing-demo clean tidy app-deps app-analyze app-web app-run emulator run-firebase backup
 
 build:
 	go build -o bin/server ./cmd/server
 	go build -o bin/seed ./cmd/seed
 	go build -o bin/provision ./cmd/provision
+	go build -o bin/backup ./cmd/backup
 	go build -o bin/teltonika-adapter ./cmd/teltonika-adapter
 	go build -o bin/gps-simulator ./cmd/gps-simulator
+
+# Consistent snapshot of the dev DB (VACUUM INTO) — safe while `make run`
+# is going. Writes to ./backups/kickstand-<timestamp>.db.
+backup:
+	go run ./cmd/backup -dsn kickstand.db
 
 # Full test suite — every httpapi test goes through the Firebase Auth
 # emulator (Phase 1 of firebase-auth-migration.md). Receipt round-trip

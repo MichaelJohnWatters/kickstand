@@ -86,11 +86,28 @@ serve it from Caddy with a `file_server`. **Its origin must be listed in
 ## Data & backups
 
 All state is the `kickstand-data` volume (`/data/kickstand.db` + uploads).
-Back it up with:
+
+**Backup** — use the `backup` tool, not a raw `cp`: it runs `VACUUM INTO`, a
+consistent snapshot that's safe to take while the server is running (a file
+copy can catch a half-written DB).
 
 ```bash
-docker compose exec app sh -c 'cp /data/kickstand.db /data/backup-$(date +%F).db'
-# or snapshot the volume / copy it off-host on a schedule.
+docker compose run --rm --entrypoint backup app \
+  -dsn /data/kickstand.db -out /data/backups/kickstand-$(date +%F-%H%M%S).db
+# then copy the snapshot OFF the host (the point of a backup):
+docker compose cp app:/data/backups/. ./backups/
+```
+
+Run it on a schedule (host cron calling the command above). `-out` must be a
+fresh path each time — `VACUUM INTO` refuses to overwrite.
+
+**Restore** — a file swap while the server is stopped:
+
+```bash
+docker compose stop app
+docker compose run --rm --entrypoint sh app -c \
+  'cp /data/backups/kickstand-2026-10-14-0300.db /data/kickstand.db'
+docker compose start app
 ```
 
 Firebase Storage (set `FIREBASE_STORAGE_BUCKET`) moves receipt images off the

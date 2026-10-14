@@ -16,7 +16,8 @@ RUN go mod download
 COPY . .
 ENV CGO_ENABLED=0 GOOS=linux
 RUN go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server \
- && go build -trimpath -ldflags="-s -w" -o /out/provision ./cmd/provision
+ && go build -trimpath -ldflags="-s -w" -o /out/provision ./cmd/provision \
+ && go build -trimpath -ldflags="-s -w" -o /out/backup ./cmd/backup
 
 # ---- runtime ----
 FROM alpine:3.20
@@ -28,6 +29,7 @@ RUN apk add --no-cache ca-certificates wget tzdata \
  && mkdir -p /data && chown kickstand:kickstand /data
 COPY --from=build /out/server /usr/local/bin/server
 COPY --from=build /out/provision /usr/local/bin/provision
+COPY --from=build /out/backup /usr/local/bin/backup
 USER kickstand
 WORKDIR /data
 EXPOSE 8765
