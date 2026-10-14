@@ -1,9 +1,16 @@
 # Deploying Kickstand
 
+> **Recommended path: Fly.io** (`../fly.toml`), per the portfolio deploy
+> standard (`toolkit/docs/deploy-standard.md`). Fly gives TLS, health-gated
+> rollouts, volumes, and secrets with minimal ops, and the image bundles
+> Litestream for continuous SQLite backup. This doc covers the **Docker
+> Compose + Caddy** path, which stays supported as the portable self-host
+> alternative (any VPS/Pi, or Cloud Run with a volume) — the same image runs
+> both ways.
+
 A portable Docker deployment of the Go API behind Caddy (automatic HTTPS).
-Runs on any Docker host — a VPS, a Raspberry Pi, a Fly machine, or Cloud Run
-with a mounted volume. The API is a single static binary using SQLite on a
-persistent volume; migrate to Postgres when concurrency/scale demands it.
+The API is a single static binary using SQLite on a persistent volume; migrate
+to Postgres when concurrency/scale demands it.
 
 ## Tenancy: one deployment, or one per customer?
 
@@ -27,7 +34,7 @@ signup to its one school. No code fork — just configuration.
 
 ```bash
 cd deploy
-cp .env.example .env            # edit: KS_DOMAIN, KS_CORS_ALLOWED_ORIGINS, FIREBASE_PROJECT_ID
+cp .env.example .env            # edit: KS_DOMAIN, CORS_ALLOWED_ORIGINS, FIREBASE_PROJECT_ID
 mkdir -p secrets                # gitignored
 cp /path/to/firebase-sa.json secrets/firebase-sa.json   # matches GOOGLE_APPLICATION_CREDENTIALS
 
@@ -36,7 +43,7 @@ docker compose logs -f app      # look for "auth: firebase enabled" + "tenancy: 
 ```
 
 Caddy obtains a Let's Encrypt cert for `KS_DOMAIN` automatically. The API is
-then live at `https://<KS_DOMAIN>/` (e.g. `GET /health` returns 200).
+then live at `https://<KS_DOMAIN>/` (e.g. `GET /healthz` returns 200).
 
 ### Onboard the first school
 
@@ -81,7 +88,7 @@ advertises only it, and the client needs no school picker. Boot logs
 The Flutter web build (`make app-web`, output `app/build/web/`) is a static
 bundle — host it on any static host (Cloudflare Pages, Firebase Hosting) or
 serve it from Caddy with a `file_server`. **Its origin must be listed in
-`KS_CORS_ALLOWED_ORIGINS`** or the browser will block API calls.
+`CORS_ALLOWED_ORIGINS`** or the browser will block API calls.
 
 ## Data & backups
 
@@ -120,15 +127,15 @@ See `.env.example`. Server flags (overridable in `docker-compose.yml`'s
 `-signup-rate-per-min`, `-signup-burst`, `-reminders-interval`,
 `-email-interval`, `-log-level`.
 
-**Email:** set `SMTP_HOST` (+ `SMTP_PORT`/`USERNAME`/`PASSWORD`, `KS_EMAIL_FROM`)
+**Email:** set `SMTP_HOST` (+ `SMTP_PORT`/`USERNAME`/`PASSWORD`, `EMAIL_FROM`)
 to send booking confirmations, reminders, and cancellations via any SMTP relay.
 Without it, email notifications queue but aren't sent (in-app still works);
-`KS_EMAIL_LOG=1` logs them for dev. The worker drains the outbox every
+`EMAIL_LOG=1` logs them for dev. The worker drains the outbox every
 `-email-interval`.
 
-**Health & monitoring:** `GET /health` is liveness (process up); `GET /readyz`
+**Health & monitoring:** `GET /healthz` is liveness (process up); `GET /readyz`
 is readiness (DB reachable — point uptime checks / load balancers here);
 `GET /metrics` is minimal Prometheus-text request counters (aggregate only, no
 PII — firewall it off if you don't want request volume public). Set
-`KS_ERROR_WEBHOOK` to a Slack/Discord-style webhook to get a `{"text":...}`
+`ERROR_WEBHOOK` to a Slack/Discord-style webhook to get a `{"text":...}`
 alert whenever a handler panics.

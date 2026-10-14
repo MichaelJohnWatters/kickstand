@@ -74,7 +74,7 @@ func (s *SMTPSender) render(m Message) []byte {
 	return []byte(b.String())
 }
 
-// LogSender logs instead of sending — the dev/staging stand-in (KS_EMAIL_LOG=1)
+// LogSender logs instead of sending — the dev/staging stand-in (EMAIL_LOG=1)
 // so the whole pipeline can be exercised without a real SMTP relay.
 type LogSender struct{ Log *slog.Logger }
 

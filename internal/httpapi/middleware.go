@@ -275,7 +275,7 @@ func withRecover(next http.Handler) http.Handler {
 // credentials) only when it's explicitly allow-listed, or — when no
 // allow-list is configured — when it's a localhost origin so the dev loop
 // keeps working out of the box. A production deploy MUST set
-// KS_CORS_ALLOWED_ORIGINS to its real web origin(s); an unknown origin
+// CORS_ALLOWED_ORIGINS to its real web origin(s); an unknown origin
 // simply receives no CORS headers and the browser blocks the response.
 //
 // The Authorization header is explicitly listed in Allow-Headers — browsers

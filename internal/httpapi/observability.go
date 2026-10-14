@@ -9,10 +9,10 @@ import (
 )
 
 // Observability surface, all dependency-free:
-//   - GET /health  — liveness (process is up). Already existed.
+//   - GET /healthz — liveness (process is up).
 //   - GET /readyz  — readiness (can serve traffic: DB reachable).
 //   - GET /metrics — minimal Prometheus-text request counters.
-//   - ErrorReporter — optional panic-alert hook (wired from KS_ERROR_WEBHOOK).
+//   - ErrorReporter — optional panic-alert hook (wired from ERROR_WEBHOOK).
 
 // httpMetrics holds process-wide request counters. Atomic so the metrics
 // middleware can update them without locking.
@@ -28,7 +28,7 @@ var httpMetrics struct {
 // ErrorReporter, when set, is invoked (best-effort, async) with a short
 // description whenever a handler panics. Lets a deployment wire a crash alert
 // (Slack/Discord/collector) without a hard Sentry dependency. Set in main from
-// KS_ERROR_WEBHOOK; nil = no-op.
+// ERROR_WEBHOOK; nil = no-op.
 var ErrorReporter func(detail string)
 
 // withMetrics counts responses by status class for /metrics. Uses its own
@@ -52,7 +52,7 @@ func withMetrics(next http.Handler) http.Handler {
 }
 
 // handleReadyz reports whether the server can actually serve traffic — i.e.
-// the database answers. Liveness (/health) says "the process is up"; a load
+// the database answers. Liveness (/healthz) says "the process is up"; a load
 // balancer or uptime check should gate on /readyz.
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)

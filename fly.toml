@@ -1,0 +1,50 @@
+# Fly.io config for Kickstand. Unlike yoga-school (one deploy per studio),
+# Kickstand is shared multi-tenant: ONE app serves all schools, isolated by
+# school_id. (For a dedicated single-tenant instance, copy this, rename `app`
+# + the volume, and set KS_SINGLE_TENANT_SCHOOL_ID in secrets.)
+#
+# Before first deploy:
+#   fly apps create kickstand
+#   fly volumes create kickstand_data --size 1 --region lhr
+#   fly secrets set CORS_ALLOWED_ORIGINS=https://app.<domain> \
+#       FIREBASE_PROJECT_ID=<proj> GOOGLE_APPLICATION_CREDENTIALS=/data/firebase-sa.json \
+#       FIREBASE_STORAGE_BUCKET=<bucket> \
+#       SMTP_HOST=... SMTP_USERNAME=... SMTP_PASSWORD=... EMAIL_FROM=... \
+#       LITESTREAM_BUCKET=... LITESTREAM_ENDPOINT=... LITESTREAM_REGION=... \
+#       LITESTREAM_ACCESS_KEY_ID=... LITESTREAM_SECRET_ACCESS_KEY=...
+#   (upload the service-account JSON to /data/firebase-sa.json once)
+#   fly deploy
+# Provision the first school:
+#   fly ssh console -C "provision -dsn /data/kickstand.db -name '...' -region NI \
+#       -owner-email ... -owner-name ... -owner-password ..."
+
+app = "kickstand"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  APP_ENV = "production"
+  # Everything else comes from `fly secrets set` (see header). With
+  # APP_ENV=production the server refuses to boot unless CORS_ALLOWED_ORIGINS
+  # is set and no dev/emulator env is present (productionBootProblems).
+
+[[mounts]]
+  source = "kickstand_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8765
+  force_https = true
+  # SQLite single-writer: exactly one machine, never auto-stop/scale.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"

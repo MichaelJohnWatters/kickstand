@@ -27,12 +27,23 @@ FROM alpine:3.20
 RUN apk add --no-cache ca-certificates wget tzdata \
  && addgroup -S kickstand && adduser -S -G kickstand kickstand \
  && mkdir -p /data && chown kickstand:kickstand /data
+# Litestream: continuous SQLite replication to object storage (active only when
+# LITESTREAM_BUCKET is set — see docker-entrypoint.sh).
+ARG LITESTREAM_VERSION=0.3.13
+ADD https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-v${LITESTREAM_VERSION}-linux-amd64.tar.gz /tmp/ls.tgz
+RUN tar -C /usr/local/bin -xzf /tmp/ls.tgz litestream && rm /tmp/ls.tgz
 COPY --from=build /out/server /usr/local/bin/server
 COPY --from=build /out/provision /usr/local/bin/provision
 COPY --from=build /out/backup /usr/local/bin/backup
+COPY litestream.yml /etc/litestream.yml
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 USER kickstand
 WORKDIR /data
 EXPOSE 8765
 VOLUME ["/data"]
-ENTRYPOINT ["server"]
-CMD ["-addr", ":8765", "-dsn", "/data/kickstand.db", "-uploads-dir", "/data/uploads"]
+# The entrypoint migrates-then-serves (wrapped by Litestream when configured).
+# Operational CLIs are still reachable by overriding it:
+#   docker compose run --rm --entrypoint provision app ...
+#   docker compose run --rm --entrypoint backup   app ...
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

@@ -114,16 +114,28 @@ func main() {
 			slog.String("project", os.Getenv("FIREBASE_PROJECT_ID")))
 	}
 
+	// Production boot-gate: refuse to start with a dev/insecure config when
+	// APP_ENV=production. Fail fast rather than ship a dev gate to prod.
+	if problems := productionBootProblems(os.Getenv, fb != nil); len(problems) > 0 {
+		for _, p := range problems {
+			log.Error("production boot-gate failed", slog.String("problem", p))
+		}
+		os.Exit(1)
+	}
+	if os.Getenv("APP_ENV") == "production" {
+		log.Info("production boot-gate: passed")
+	}
+
 	srv := httpapi.NewServer(d, files, fb)
 	srv.MaxBodyBytes = *maxBodyBytes
 	// CORS allow-list for production. Comma-separated origins, e.g.
 	// "https://app.kickstand.example". Empty → dev mode (localhost only).
-	if origins := os.Getenv("KS_CORS_ALLOWED_ORIGINS"); origins != "" {
+	if origins := os.Getenv("CORS_ALLOWED_ORIGINS"); origins != "" {
 		srv.CORSAllowedOrigins = splitAndTrim(origins)
 		log.Info("cors: production allow-list", slog.Any("origins", srv.CORSAllowedOrigins))
 	} else {
 		log.Info("cors: dev mode (localhost origins only)",
-			slog.String("hint", "set KS_CORS_ALLOWED_ORIGINS to your web origin(s) in production"))
+			slog.String("hint", "set CORS_ALLOWED_ORIGINS to your web origin(s) in production"))
 	}
 	srv.EnableSignupRateLimit(*signupRatePerMin, *signupBurst)
 	if *signupRatePerMin > 0 {
@@ -147,7 +159,7 @@ func main() {
 		log.Info("tenancy: shared multi-tenant")
 	}
 
-	// Optional crash-alert hook: POSTs panic details to KS_ERROR_WEBHOOK
+	// Optional crash-alert hook: POSTs panic details to ERROR_WEBHOOK
 	// (Slack/Discord/collector). No-op if unset.
 	httpapi.ErrorReporter = buildErrorReporter(log)
 
@@ -173,12 +185,12 @@ func main() {
 	}
 
 	// Email worker: drains the notification outbox via the configured sender.
-	// SMTP_HOST → real SMTP; else KS_EMAIL_LOG=1 → log-only (dev); else email
+	// SMTP_HOST → real SMTP; else EMAIL_LOG=1 → log-only (dev); else email
 	// stays queued but unsent (no worker), so bookings still succeed.
 	if sender := buildEmailSender(log); sender != nil && *emailInterval > 0 {
 		go runEmailWorker(rootCtx, d, sender, *emailInterval)
 	} else {
-		log.Info("email: disabled (no SMTP_HOST / KS_EMAIL_LOG) — notifications queue but aren't emailed")
+		log.Info("email: disabled (no SMTP_HOST / EMAIL_LOG) — notifications queue but aren't emailed")
 	}
 
 	// Graceful shutdown on SIGINT/SIGTERM.
@@ -234,16 +246,16 @@ func runRemindersWorker(ctx context.Context, d *sql.DB, interval time.Duration) 
 }
 
 // buildEmailSender picks an email.Sender from the environment: a real SMTP
-// relay when SMTP_HOST is set, a log-only sender when KS_EMAIL_LOG=1 (dev),
+// relay when SMTP_HOST is set, a log-only sender when EMAIL_LOG=1 (dev),
 // or nil (email disabled). Reads SMTP_HOST/PORT/USERNAME/PASSWORD and
-// KS_EMAIL_FROM / KS_EMAIL_FROM_NAME.
+// EMAIL_FROM / EMAIL_FROM_NAME.
 func buildEmailSender(log *slog.Logger) email.Sender {
 	if host := os.Getenv("SMTP_HOST"); host != "" {
 		port := os.Getenv("SMTP_PORT")
 		if port == "" {
 			port = "587"
 		}
-		from := os.Getenv("KS_EMAIL_FROM")
+		from := os.Getenv("EMAIL_FROM")
 		if from == "" {
 			from = os.Getenv("SMTP_USERNAME")
 		}
@@ -254,21 +266,21 @@ func buildEmailSender(log *slog.Logger) email.Sender {
 			Username: os.Getenv("SMTP_USERNAME"),
 			Password: os.Getenv("SMTP_PASSWORD"),
 			From:     from,
-			FromName: os.Getenv("KS_EMAIL_FROM_NAME"),
+			FromName: os.Getenv("EMAIL_FROM_NAME"),
 		}
 	}
-	if os.Getenv("KS_EMAIL_LOG") == "1" {
-		log.Info("email: log-only sender (KS_EMAIL_LOG=1) — nothing actually sent")
+	if os.Getenv("EMAIL_LOG") == "1" {
+		log.Info("email: log-only sender (EMAIL_LOG=1) — nothing actually sent")
 		return email.LogSender{Log: log.With(slog.String("component", "email"))}
 	}
 	return nil
 }
 
 // buildErrorReporter returns a best-effort panic-alert hook posting to
-// KS_ERROR_WEBHOOK as {"text": "..."} (Slack/Discord-compatible), or nil when
+// ERROR_WEBHOOK as {"text": "..."} (Slack/Discord-compatible), or nil when
 // unset. Called asynchronously by the recover middleware.
 func buildErrorReporter(log *slog.Logger) func(string) {
-	url := os.Getenv("KS_ERROR_WEBHOOK")
+	url := os.Getenv("ERROR_WEBHOOK")
 	if url == "" {
 		return nil
 	}
@@ -315,6 +327,29 @@ func runEmailWorker(ctx context.Context, d *sql.DB, sender email.Sender, interva
 			drain(now)
 		}
 	}
+}
+
+// productionBootProblems returns the reasons the server must refuse to boot
+// when APP_ENV=production — a dev/insecure config reaching prod. Empty = safe.
+// Pure (env injected) so it's unit-testable.
+func productionBootProblems(get func(string) string, firebaseConfigured bool) []string {
+	if get("APP_ENV") != "production" {
+		return nil
+	}
+	var problems []string
+	if get("CORS_ALLOWED_ORIGINS") == "" {
+		problems = append(problems, "CORS_ALLOWED_ORIGINS must be set in production")
+	}
+	if get("FIREBASE_AUTH_EMULATOR_HOST") != "" {
+		problems = append(problems, "FIREBASE_AUTH_EMULATOR_HOST must not be set in production")
+	}
+	if get("STORAGE_EMULATOR_HOST") != "" || get("FIREBASE_STORAGE_EMULATOR_HOST") != "" {
+		problems = append(problems, "storage emulator env must not be set in production")
+	}
+	if !firebaseConfigured {
+		problems = append(problems, "Firebase must be configured in production (GOOGLE_APPLICATION_CREDENTIALS + FIREBASE_PROJECT_ID)")
+	}
+	return problems
 }
 
 func parseLevel(s string) slog.Level {

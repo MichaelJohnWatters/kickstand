@@ -355,7 +355,7 @@ func randomPrefix() string {
 
 func TestHealthcheck(t *testing.T) {
 	f := newAPIFixture(t)
-	resp, _ := f.do("GET", "/health", nil, "")
+	resp, _ := f.do("GET", "/healthz", nil, "")
 	if resp.StatusCode != 200 {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
 	}

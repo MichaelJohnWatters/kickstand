@@ -102,7 +102,7 @@ func (s *Server) routeTable() []routeSpec {
 		// authenticated Firebase user".
 		{"POST", "/auth/firebase-signup", true, s.handleFirebaseSignup},
 		{"GET", "/schools", true, s.handleListSchools},
-		{"GET", "/health", true, healthCheck},
+		{"GET", "/healthz", true, healthCheck},
 		{"GET", "/readyz", true, s.handleReadyz},
 		{"GET", "/metrics", true, handleMetrics},
 

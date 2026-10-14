@@ -27,7 +27,7 @@ func TestReadyz_ReflectsDBHealth(t *testing.T) {
 		t.Fatalf("ready DB: status = %d, want 200", rec.Code)
 	}
 
-	// With the DB closed, readiness must flip to 503 (liveness /health would
+	// With the DB closed, readiness must flip to 503 (liveness /healthz would
 	// still be 200 — that's the point of the distinction).
 	d.Close()
 	rec = httptest.NewRecorder()
