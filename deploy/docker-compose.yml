@@ -27,6 +27,15 @@ services:
       - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}
       - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
       - FIREBASE_STORAGE_BUCKET=${FIREBASE_STORAGE_BUCKET:-}
+      # Transactional email. SMTP_HOST set → real sending; else KS_EMAIL_LOG=1
+      # → log only; else email queues but isn't sent.
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - KS_EMAIL_FROM=${KS_EMAIL_FROM:-}
+      - KS_EMAIL_FROM_NAME=${KS_EMAIL_FROM_NAME:-}
+      - KS_EMAIL_LOG=${KS_EMAIL_LOG:-}
       # Dedicated single-tenant instance: pin to one school id. Empty = shared.
       - KS_SINGLE_TENANT_SCHOOL_ID=${KS_SINGLE_TENANT_SCHOOL_ID:-}
     volumes:

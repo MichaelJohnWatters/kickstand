@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/michaeljohnwatters/kickstand/internal/domain"
+	"github.com/michaeljohnwatters/kickstand/internal/notify"
+	"github.com/michaeljohnwatters/kickstand/internal/tenant"
 )
 
 const (
@@ -182,9 +184,15 @@ func emit(ctx context.Context, db *sql.DB, kind, category string, s sessionToRem
 		VALUES (?, ?, ?, ?, 'in_app', ?, 'sent', ?)
 	`
 	sent := now.UTC().Format(time.RFC3339)
+	scope := tenant.NewScope(tx, domain.SchoolID(s.SchoolID))
 	for _, sid := range studentIDs {
 		if _, err := tx.ExecContext(ctx, insertNotif,
 			domain.NewID(), s.SchoolID, eventID, sid, category, sent); err != nil {
+			return err
+		}
+		// Queue the same reminder as an email (outbox row) when the student's
+		// email pref is on — the email worker sends it. Same tx as the in_app row.
+		if err := notify.QueueEmail(ctx, scope, domain.EventID(eventID), domain.UserID(sid), category); err != nil {
 			return err
 		}
 	}

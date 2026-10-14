@@ -255,7 +255,9 @@ func insertNotification(ctx context.Context, scope *tenant.Scope, eventID domain
 	if err != nil {
 		return fmt.Errorf("insert notification: %w", err)
 	}
-	return nil
+	// Also queue an email (outbox row) when the recipient's email pref is on;
+	// the email worker sends it out of band. In the same tx as the in_app row.
+	return QueueEmail(ctx, scope, eventID, recipient, category)
 }
 
 func notifyAdmins(ctx context.Context, scope *tenant.Scope, eventID domain.EventID, category string) error {

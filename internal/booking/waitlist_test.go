@@ -111,7 +111,7 @@ func TestWaitlist_PromotesOnCancel(t *testing.T) {
 		SELECT COUNT(*) FROM notifications n
 		JOIN events e ON e.id = n.event_id
 		WHERE n.school_id = ? AND e.kind = 'waitlist.promoted'
-		  AND n.recipient_id = 'user_stu_c'
+		  AND n.recipient_id = 'user_stu_c' AND n.channel = 'in_app'
 	`, f.schoolID).Scan(&notifyCount); err != nil {
 		t.Fatal(err)
 	}

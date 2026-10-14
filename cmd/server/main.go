@@ -18,9 +18,11 @@ import (
 
 	"github.com/michaeljohnwatters/kickstand/internal/auth"
 	"github.com/michaeljohnwatters/kickstand/internal/db"
+	"github.com/michaeljohnwatters/kickstand/internal/email"
 	"github.com/michaeljohnwatters/kickstand/internal/filestore"
 	"github.com/michaeljohnwatters/kickstand/internal/httpapi"
 	"github.com/michaeljohnwatters/kickstand/internal/logging"
+	"github.com/michaeljohnwatters/kickstand/internal/notify"
 	"github.com/michaeljohnwatters/kickstand/internal/reminders"
 )
 
@@ -30,6 +32,8 @@ func main() {
 	uploadsDir := flag.String("uploads-dir", "./uploads", "Where receipt photos (and any other blobs) are stored locally. Swap for a GCS client at deploy time.")
 	remindersInterval := flag.Duration("reminders-interval", 5*time.Minute,
 		"How often the session-reminder worker scans for due reminders. Set to 0 to disable.")
+	emailInterval := flag.Duration("email-interval", time.Minute,
+		"How often the email worker drains the outbox. Set to 0 to disable (also disabled if no sender configured).")
 	logLevel := flag.String("log-level", "info", "Log level: debug|info|warn|error")
 	maxBodyBytes := flag.Int64("max-body-bytes", 10<<20,
 		"Maximum request body size in bytes (DoS guard). Covers receipt uploads; 0 disables the cap.")
@@ -163,6 +167,15 @@ func main() {
 		go runRemindersWorker(rootCtx, d, *remindersInterval)
 	}
 
+	// Email worker: drains the notification outbox via the configured sender.
+	// SMTP_HOST → real SMTP; else KS_EMAIL_LOG=1 → log-only (dev); else email
+	// stays queued but unsent (no worker), so bookings still succeed.
+	if sender := buildEmailSender(log); sender != nil && *emailInterval > 0 {
+		go runEmailWorker(rootCtx, d, sender, *emailInterval)
+	} else {
+		log.Info("email: disabled (no SMTP_HOST / KS_EMAIL_LOG) — notifications queue but aren't emailed")
+	}
+
 	// Graceful shutdown on SIGINT/SIGTERM.
 	idleClosed := make(chan struct{})
 	go func() {
@@ -211,6 +224,63 @@ func runRemindersWorker(ctx context.Context, d *sql.DB, interval time.Duration) 
 			if err := reminders.Tick(ctx, d, now); err != nil {
 				log.Error("tick", slog.String("err", err.Error()))
 			}
+		}
+	}
+}
+
+// buildEmailSender picks an email.Sender from the environment: a real SMTP
+// relay when SMTP_HOST is set, a log-only sender when KS_EMAIL_LOG=1 (dev),
+// or nil (email disabled). Reads SMTP_HOST/PORT/USERNAME/PASSWORD and
+// KS_EMAIL_FROM / KS_EMAIL_FROM_NAME.
+func buildEmailSender(log *slog.Logger) email.Sender {
+	if host := os.Getenv("SMTP_HOST"); host != "" {
+		port := os.Getenv("SMTP_PORT")
+		if port == "" {
+			port = "587"
+		}
+		from := os.Getenv("KS_EMAIL_FROM")
+		if from == "" {
+			from = os.Getenv("SMTP_USERNAME")
+		}
+		log.Info("email: SMTP sender", slog.String("host", host), slog.String("from", from))
+		return &email.SMTPSender{
+			Host:     host,
+			Port:     port,
+			Username: os.Getenv("SMTP_USERNAME"),
+			Password: os.Getenv("SMTP_PASSWORD"),
+			From:     from,
+			FromName: os.Getenv("KS_EMAIL_FROM_NAME"),
+		}
+	}
+	if os.Getenv("KS_EMAIL_LOG") == "1" {
+		log.Info("email: log-only sender (KS_EMAIL_LOG=1) — nothing actually sent")
+		return email.LogSender{Log: log.With(slog.String("component", "email"))}
+	}
+	return nil
+}
+
+// runEmailWorker drains the email outbox on startup and every interval.
+func runEmailWorker(ctx context.Context, d *sql.DB, sender email.Sender, interval time.Duration) {
+	log := slog.Default().With(slog.String("component", "email"))
+	log.Info("worker started", slog.Duration("interval", interval))
+	defer log.Info("worker stopped")
+	drain := func(now time.Time) {
+		n, err := notify.DispatchEmails(ctx, d, sender, now, 0)
+		if err != nil {
+			log.Error("dispatch", slog.String("err", err.Error()))
+		} else if n > 0 {
+			log.Info("sent", slog.Int("count", n))
+		}
+	}
+	drain(time.Now())
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			drain(now)
 		}
 	}
 }

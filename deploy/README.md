@@ -117,4 +117,11 @@ volume to GCS, leaving only the DB to back up.
 
 See `.env.example`. Server flags (overridable in `docker-compose.yml`'s
 `command`): `-addr`, `-dsn`, `-uploads-dir`, `-max-body-bytes`,
-`-signup-rate-per-min`, `-signup-burst`, `-reminders-interval`, `-log-level`.
+`-signup-rate-per-min`, `-signup-burst`, `-reminders-interval`,
+`-email-interval`, `-log-level`.
+
+**Email:** set `SMTP_HOST` (+ `SMTP_PORT`/`USERNAME`/`PASSWORD`, `KS_EMAIL_FROM`)
+to send booking confirmations, reminders, and cancellations via any SMTP relay.
+Without it, email notifications queue but aren't sent (in-app still works);
+`KS_EMAIL_LOG=1` logs them for dev. The worker drains the outbox every
+`-email-interval`.

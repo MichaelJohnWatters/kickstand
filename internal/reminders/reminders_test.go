@@ -62,10 +62,12 @@ func seedSession(t *testing.T, d *sql.DB, now, start time.Time, id string, withB
 	}
 }
 
+// countNotifs counts in-app reminder notifications. (Reminders now also queue
+// email-channel outbox rows; this asserts the in-app delivery specifically.)
 func countNotifs(t *testing.T, d *sql.DB) int {
 	t.Helper()
 	var n int
-	if err := d.QueryRow(`SELECT COUNT(*) FROM notifications WHERE category = 'reminder'`).Scan(&n); err != nil {
+	if err := d.QueryRow(`SELECT COUNT(*) FROM notifications WHERE category = 'reminder' AND channel = 'in_app'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n
