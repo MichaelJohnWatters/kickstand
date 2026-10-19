@@ -1,10 +1,19 @@
 package httpapi
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
+	"time"
 
 	"github.com/michaeljohnwatters/kickstand/internal/auth"
+	"github.com/michaeljohnwatters/kickstand/internal/domain"
 )
+
+// accessTTL is how long a hand-rolled access token is valid. Longer than ideal
+// until a refresh endpoint lands (Phase 1c); revocation still works because the
+// middleware re-loads (and can reject) the user from the DB each request.
+const accessTTL = 24 * time.Hour
 
 // identityView is the wire shape of an authenticated identity. Both /me
 // and the signup endpoints emit this. Kept as a plain JSON struct so
@@ -36,4 +45,55 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toIdentityView(*id))
+}
+
+// handleLogin — POST /auth/login (public). Verifies email + password and
+// returns an access token + the identity. On a single-tenant instance the
+// school is pinned; otherwise the client supplies schoolId (as at signup).
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if s.Tokens == nil {
+		writeError(w, http.StatusServiceUnavailable, "auth_not_configured",
+			"password login is not enabled on this server")
+		return
+	}
+	var req struct {
+		SchoolID string `json:"schoolId"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_json", "request body must be valid JSON")
+		return
+	}
+	schoolID := req.SchoolID
+	if s.SingleTenantSchoolID != "" {
+		schoolID = s.SingleTenantSchoolID
+	}
+
+	id, err := auth.Authenticate(r.Context(), s.DB, domain.SchoolID(schoolID), req.Email, req.Password)
+	switch {
+	case errors.Is(err, auth.ErrInvalidCredential):
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "Incorrect email or password")
+		return
+	case errors.Is(err, auth.ErrAccountDisabled):
+		writeError(w, http.StatusForbidden, "account_disabled", "This account has been disabled")
+		return
+	case err != nil:
+		writeInternal(w, r, "login_failed", err)
+		return
+	}
+
+	token, err := s.Tokens.IssueAccess(id.UserID, accessTTL, time.Now())
+	if err != nil {
+		writeInternal(w, r, "login_failed", err)
+		return
+	}
+	// Publish identity so the audit middleware logs the login against the user.
+	if st := requestStateFrom(r.Context()); st != nil {
+		st.identity = id
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token":    token,
+		"identity": toIdentityView(*id),
+	})
 }

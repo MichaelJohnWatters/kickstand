@@ -128,6 +128,18 @@ func main() {
 
 	srv := httpapi.NewServer(d, files, fb)
 	srv.MaxBodyBytes = *maxBodyBytes
+	// Hand-rolled email/password auth: enabled when JWT_SIGNING_KEY is set.
+	// The middleware then accepts our access tokens (preferred) with Firebase
+	// as the migration fallback; /auth/login issues them.
+	if key := os.Getenv("JWT_SIGNING_KEY"); key != "" {
+		ts, err := auth.NewTokenService([]byte(key))
+		if err != nil {
+			log.Error("auth: invalid JWT_SIGNING_KEY", slog.String("err", err.Error()))
+			os.Exit(1)
+		}
+		srv.Tokens = ts
+		log.Info("auth: password login enabled (hand-rolled tokens)")
+	}
 	// CORS allow-list for production. Comma-separated origins, e.g.
 	// "https://app.kickstand.example". Empty → dev mode (localhost only).
 	if origins := os.Getenv("CORS_ALLOWED_ORIGINS"); origins != "" {

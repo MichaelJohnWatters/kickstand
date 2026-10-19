@@ -37,6 +37,11 @@ type Server struct {
 	DB       *sql.DB
 	Files    filestore.Store      // receipt blobs (and any future file types)
 	Firebase *auth.FirebaseClient // nil when running without Firebase Auth (tests, legacy `make run` target).
+	// Tokens, when set, enables hand-rolled email/password auth: the
+	// middleware accepts our own access tokens (preferred) and /auth/login
+	// issues them. During the Firebase→hand-rolled migration both paths run;
+	// Firebase is the fallback. Set from JWT_SIGNING_KEY in main.go.
+	Tokens *auth.TokenService
 
 	// MaxBodyBytes caps every request body (see withMaxBytes). Zero means
 	// use defaultMaxBodyBytes; a negative value disables the cap.
@@ -101,6 +106,7 @@ func (s *Server) routeTable() []routeSpec {
 		// endpoint we expose is "create the local profile for an already-
 		// authenticated Firebase user".
 		{"POST", "/auth/firebase-signup", true, s.handleFirebaseSignup},
+		{"POST", "/auth/login", true, s.handleLogin},
 		{"GET", "/schools", true, s.handleListSchools},
 		{"GET", "/healthz", true, healthCheck},
 		{"GET", "/readyz", true, s.handleReadyz},

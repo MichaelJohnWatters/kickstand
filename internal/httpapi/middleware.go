@@ -57,9 +57,9 @@ func requestStateFrom(ctx context.Context) *requestState {
 // rather than silently letting anything through.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.Firebase == nil {
-			writeError(w, http.StatusServiceUnavailable, "firebase_disabled",
-				"Firebase Auth is not configured on this server")
+		if s.Tokens == nil && s.Firebase == nil {
+			writeError(w, http.StatusServiceUnavailable, "auth_not_configured",
+				"authentication is not configured on this server")
 			return
 		}
 		token, ok := bearerToken(r)
@@ -67,7 +67,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "missing_token", "Authorization header missing or malformed")
 			return
 		}
-		id, err := s.Firebase.VerifyAndLoad(r.Context(), s.DB, token)
+		id, err := s.resolveIdentity(r.Context(), token)
 		if err != nil {
 			writeEngineError(w, err)
 			return
@@ -79,6 +79,23 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(contextWithIdentity(r.Context(), id)))
 	})
+}
+
+// resolveIdentity verifies a bearer token and loads the local identity. It
+// accepts our own hand-rolled access token (preferred, cheap + local) and,
+// during the Firebase→hand-rolled migration, falls back to a Firebase ID
+// token. Either way the authoritative role/status come from the DB, never from
+// the token.
+func (s *Server) resolveIdentity(ctx context.Context, token string) (*auth.Identity, error) {
+	if s.Tokens != nil {
+		if uid, err := s.Tokens.VerifyAccess(token); err == nil {
+			return auth.LoadByUserID(ctx, s.DB, uid)
+		}
+	}
+	if s.Firebase != nil {
+		return s.Firebase.VerifyAndLoad(ctx, s.DB, token)
+	}
+	return nil, auth.ErrSessionInvalid
 }
 
 func bearerToken(r *http.Request) (string, bool) {
