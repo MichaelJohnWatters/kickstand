@@ -112,6 +112,7 @@ func (s *Server) routeTable() []routeSpec {
 		{"POST", "/auth/firebase-signup", true, s.handleFirebaseSignup},
 		{"POST", "/auth/login", true, s.handleLogin},
 		{"POST", "/auth/signup", true, s.handleSignup},
+		{"POST", "/auth/refresh", true, s.handleRefresh},
 		{"POST", "/auth/password-reset/request", true, s.handlePasswordResetRequest},
 		{"POST", "/auth/password-reset/confirm", true, s.handlePasswordResetConfirm},
 		{"GET", "/schools", true, s.handleListSchools},

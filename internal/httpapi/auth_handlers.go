@@ -26,10 +26,25 @@ func firstName(name string) string {
 	return name
 }
 
-// accessTTL is how long a hand-rolled access token is valid. Longer than ideal
-// until a refresh endpoint lands (Phase 1c); revocation still works because the
-// middleware re-loads (and can reject) the user from the DB each request.
-const accessTTL = 24 * time.Hour
+// accessTTL is how long a hand-rolled access token is valid — short, since the
+// client refreshes it via /auth/refresh. Revocation is immediate regardless
+// because the middleware re-loads (and can reject) the user from the DB each
+// request; the short TTL just bounds how long a leaked token stays usable.
+const accessTTL = time.Hour
+
+// issueTokenPair mints an access token + a refresh token for a signed-in user.
+func (s *Server) issueTokenPair(ctx context.Context, id *auth.Identity) (access, refresh string, err error) {
+	now := time.Now()
+	access, err = s.Tokens.IssueAccess(id.UserID, accessTTL, now)
+	if err != nil {
+		return "", "", err
+	}
+	refresh, err = auth.CreateRefreshToken(ctx, s.DB, id.SchoolID, id.UserID, now)
+	if err != nil {
+		return "", "", err
+	}
+	return access, refresh, nil
+}
 
 // identityView is the wire shape of an authenticated identity. Both /me
 // and the signup endpoints emit this. Kept as a plain JSON struct so
@@ -99,7 +114,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := s.Tokens.IssueAccess(id.UserID, accessTTL, time.Now())
+	token, refresh, err := s.issueTokenPair(r.Context(), id)
 	if err != nil {
 		writeInternal(w, r, "login_failed", err)
 		return
@@ -109,8 +124,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		st.identity = id
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"token":    token,
-		"identity": toIdentityView(*id),
+		"token":        token,
+		"refreshToken": refresh,
+		"identity":     toIdentityView(*id),
 	})
 }
 
@@ -164,7 +180,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := s.Tokens.IssueAccess(id.UserID, accessTTL, time.Now())
+	token, refresh, err := s.issueTokenPair(r.Context(), id)
 	if err != nil {
 		writeInternal(w, r, "signup_failed", err)
 		return
@@ -173,8 +189,63 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		st.identity = id
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"token":    token,
-		"identity": toIdentityView(*id),
+		"token":        token,
+		"refreshToken": refresh,
+		"identity":     toIdentityView(*id),
+	})
+}
+
+// handleRefresh — POST /auth/refresh (public). Trades a valid refresh token
+// for a new access token + a rotated refresh token. The old refresh token is
+// consumed (single-use), so a leaked-then-used token is detectable by the
+// legitimate client's next refresh failing. Rejects disabled/deleted accounts.
+func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	if s.Tokens == nil {
+		writeError(w, http.StatusServiceUnavailable, "auth_not_configured",
+			"token refresh is not enabled on this server")
+		return
+	}
+	var req struct {
+		RefreshToken string `json:"refreshToken"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_json", "request body must be valid JSON")
+		return
+	}
+
+	userID, _, newRefresh, err := auth.RotateRefreshToken(r.Context(), s.DB, req.RefreshToken, time.Now())
+	if errors.Is(err, auth.ErrSessionInvalid) {
+		writeError(w, http.StatusUnauthorized, "invalid_refresh_token", "Your session has expired — please sign in again")
+		return
+	}
+	if err != nil {
+		writeInternal(w, r, "refresh_failed", err)
+		return
+	}
+
+	// Re-load the live identity so a disabled account can't keep refreshing.
+	id, err := auth.LoadByUserID(r.Context(), s.DB, userID)
+	switch {
+	case errors.Is(err, auth.ErrAccountDisabled):
+		writeError(w, http.StatusForbidden, "account_disabled", "This account has been disabled")
+		return
+	case errors.Is(err, auth.ErrProfileMissing):
+		writeError(w, http.StatusUnauthorized, "invalid_refresh_token", "Your session has expired — please sign in again")
+		return
+	case err != nil:
+		writeInternal(w, r, "refresh_failed", err)
+		return
+	}
+
+	token, err := s.Tokens.IssueAccess(id.UserID, accessTTL, time.Now())
+	if err != nil {
+		writeInternal(w, r, "refresh_failed", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token":        token,
+		"refreshToken": newRefresh,
+		"identity":     toIdentityView(*id),
 	})
 }
 
