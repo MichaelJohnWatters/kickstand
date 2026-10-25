@@ -23,14 +23,14 @@ func newDB(t *testing.T) *sql.DB {
 
 func validInput() provisionInput {
 	return provisionInput{
-		SchoolID:    "sch-1",
-		OwnerID:     "owner-1",
-		Name:        "Belfast Rider Co",
-		Region:      "GB",
-		Onboarding:  "approval",
-		OwnerEmail:  "jo@belfastrider.co.uk",
-		OwnerName:   "Jo Rider",
-		FirebaseUID: "owner-1",
+		SchoolID:     "sch-1",
+		OwnerID:      "owner-1",
+		Name:         "Belfast Rider Co",
+		Region:       "GB",
+		Onboarding:   "approval",
+		OwnerEmail:   "jo@belfastrider.co.uk",
+		OwnerName:    "Jo Rider",
+		PasswordHash: "$2a$12$placeholderplaceholderplaceholderplaceholderplace",
 	}
 }
 
@@ -51,14 +51,21 @@ func TestProvisionSchool_CreatesSchoolAndOwner(t *testing.T) {
 		t.Errorf("school = %q/%q/%q/%q, want Belfast Rider Co/GB/DVSA/approval", name, region, testBody, onboarding)
 	}
 
-	var email, role, status, fbUID string
+	var email, role, status, passwordHash, fbUID string
 	if err := d.QueryRow(
-		`SELECT email, role, account_status, COALESCE(firebase_uid,'') FROM users WHERE id = 'owner-1'`).
-		Scan(&email, &role, &status, &fbUID); err != nil {
+		`SELECT email, role, account_status, password_hash, COALESCE(firebase_uid,'') FROM users WHERE id = 'owner-1'`).
+		Scan(&email, &role, &status, &passwordHash, &fbUID); err != nil {
 		t.Fatalf("read owner: %v", err)
 	}
-	if role != "owner" || status != "active" || email != "jo@belfastrider.co.uk" || fbUID != "owner-1" {
-		t.Errorf("owner = %q/%q/%q/fb=%q, want owner/active/email/owner-1", role, status, email, fbUID)
+	if role != "owner" || status != "active" || email != "jo@belfastrider.co.uk" {
+		t.Errorf("owner = %q/%q/%q, want owner/active/email", role, status, email)
+	}
+	// Owner authenticates by password, not Firebase: hash written, firebase_uid NULL.
+	if passwordHash != validInput().PasswordHash {
+		t.Errorf("password_hash = %q, want the supplied hash", passwordHash)
+	}
+	if fbUID != "" {
+		t.Errorf("firebase_uid = %q, want NULL", fbUID)
 	}
 }
 
@@ -76,20 +83,6 @@ func TestProvisionSchool_NIMapsToDVA(t *testing.T) {
 	}
 }
 
-func TestProvisionSchool_NoFirebaseLeavesUIDNull(t *testing.T) {
-	d := newDB(t)
-	in := validInput()
-	in.FirebaseUID = nil // -no-firebase
-	if err := provisionSchool(context.Background(), d, in); err != nil {
-		t.Fatalf("provision: %v", err)
-	}
-	var fbUID sql.NullString
-	d.QueryRow(`SELECT firebase_uid FROM users WHERE id = 'owner-1'`).Scan(&fbUID)
-	if fbUID.Valid {
-		t.Errorf("firebase_uid = %q, want NULL", fbUID.String)
-	}
-}
-
 func TestProvisionSchool_RefusesDuplicateSchoolID(t *testing.T) {
 	ctx := context.Background()
 	d := newDB(t)
@@ -99,7 +92,6 @@ func TestProvisionSchool_RefusesDuplicateSchoolID(t *testing.T) {
 	// Same school id, different owner id — must refuse, not clobber.
 	in := validInput()
 	in.OwnerID = "owner-2"
-	in.FirebaseUID = "owner-2"
 	in.OwnerEmail = "other@x.co"
 	if err := provisionSchool(ctx, d, in); err == nil {
 		t.Fatal("expected duplicate school id to be refused")

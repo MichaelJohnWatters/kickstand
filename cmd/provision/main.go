@@ -8,12 +8,9 @@
 //     school that instance will serve, then set
 //     KS_SINGLE_TENANT_SCHOOL_ID=<printed id> on that deployment.
 //
-// Auth is Firebase, so by default this also creates the owner's Firebase
-// user (pinning its UID to the local user id, like the seed) against whatever
-// Firebase project the environment points at — the shared project, or a
-// dedicated customer's own project. Pass -no-firebase to write only the DB
-// row (the owner then can't sign in until a Firebase user with the printed
-// UID exists).
+// Auth is hand-rolled email/password: the owner's password (supplied via
+// -owner-password) is bcrypt-hashed into the users row, and the owner signs
+// in with that email + password through /auth/login.
 //
 // Example:
 //
@@ -34,8 +31,6 @@ import (
 	"strings"
 	"time"
 
-	firebaseauth "firebase.google.com/go/v4/auth"
-
 	"github.com/michaeljohnwatters/kickstand/internal/auth"
 	"github.com/michaeljohnwatters/kickstand/internal/db"
 	"github.com/michaeljohnwatters/kickstand/internal/domain"
@@ -49,9 +44,8 @@ func main() {
 	onboarding := flag.String("onboarding-mode", "open", "Signup mode: open | approval")
 	ownerEmail := flag.String("owner-email", "", "Owner account email (required)")
 	ownerName := flag.String("owner-name", "", "Owner full name (required)")
-	ownerPassword := flag.String("owner-password", "", "Initial owner password (required unless -no-firebase)")
+	ownerPassword := flag.String("owner-password", "", "Owner's initial password (required)")
 	schoolIDFlag := flag.String("school-id", "", "Explicit school id (default: generated)")
-	noFirebase := flag.Bool("no-firebase", false, "Skip Firebase user creation; write the DB row only")
 	flag.Parse()
 
 	logging.Setup(slog.LevelInfo)
@@ -75,14 +69,18 @@ func main() {
 	if in.SchoolID == "" {
 		in.SchoolID = domain.NewID()
 	}
-	// Validate inputs up front (cheap, no I/O) so we don't create a Firebase
-	// user for a request we'd reject anyway.
+	// Validate inputs up front (cheap, no I/O) before touching the DB.
 	if err := in.validate(); err != nil {
 		fatal("%v", err)
 	}
-	if !*noFirebase && *ownerPassword == "" {
-		fatal("-owner-password is required (or pass -no-firebase to write the DB row only)")
+	if *ownerPassword == "" {
+		fatal("-owner-password is required")
 	}
+	hash, err := auth.HashPassword(*ownerPassword)
+	if err != nil {
+		fatal("password: %v", err)
+	}
+	in.PasswordHash = hash
 
 	d, err := db.Open(*dsn)
 	if err != nil {
@@ -93,40 +91,7 @@ func main() {
 		fatal("migrate: %v", err)
 	}
 
-	// Create the Firebase user FIRST (UID pinned to the local user id) so a
-	// DB failure can't leave a school whose owner can never sign in. If the
-	// DB write fails we delete the auth user to avoid an orphan.
-	var cleanupFirebase func()
-	if *noFirebase {
-		in.FirebaseUID = nil // NULL → no sign-in until linked
-	} else {
-		fb, err := auth.NewFirebaseClient(ctx)
-		if err != nil {
-			fatal("firebase init: %v", err)
-		}
-		if fb == nil {
-			fatal("Firebase is not configured — set FIREBASE_PROJECT_ID / GOOGLE_APPLICATION_CREDENTIALS " +
-				"(or FIREBASE_AUTH_EMULATOR_HOST for dev), or pass -no-firebase")
-		}
-		_, err = fb.Auth.CreateUser(ctx, (&firebaseauth.UserToCreate{}).
-			UID(in.OwnerID).
-			Email(in.OwnerEmail).
-			Password(*ownerPassword).
-			DisplayName(in.OwnerName))
-		if err != nil {
-			if strings.Contains(err.Error(), "EMAIL_EXISTS") {
-				fatal("a Firebase user with email %s already exists in this project", in.OwnerEmail)
-			}
-			fatal("firebase create user: %v", err)
-		}
-		in.FirebaseUID = in.OwnerID
-		cleanupFirebase = func() { _ = fb.Auth.DeleteUser(ctx, in.OwnerID) }
-	}
-
 	if err := provisionSchool(ctx, d, in); err != nil {
-		if cleanupFirebase != nil {
-			cleanupFirebase()
-		}
 		fatal("%v", err)
 	}
 
@@ -137,28 +102,24 @@ func main() {
 	fmt.Printf("  region      : %s (%s)\n", in.Region, testBody)
 	fmt.Printf("  onboarding  : %s\n", in.Onboarding)
 	fmt.Printf("  owner       : %s <%s>  (role=owner, user id=%s)\n", in.OwnerName, in.OwnerEmail, in.OwnerID)
-	if *noFirebase {
-		fmt.Printf("  auth        : NO Firebase user created — create one with UID %s before the owner can sign in\n", in.OwnerID)
-	} else {
-		fmt.Printf("  auth        : Firebase user created (UID=%s). Owner signs in with the email + the password you supplied.\n", in.OwnerID)
-	}
+	fmt.Printf("  auth        : password set. Owner signs in with the email + the password you supplied.\n")
 	fmt.Println()
 	fmt.Println("For a DEDICATED single-tenant instance, pin this deployment to the school:")
 	fmt.Printf("  KS_SINGLE_TENANT_SCHOOL_ID=%s\n", in.SchoolID)
 }
 
 // provisionInput is the fully-resolved request: ids already generated, email
-// normalised. Kept separate from flag parsing so the DB logic is unit-testable
-// without a Firebase project.
+// normalised, password already hashed. Kept separate from flag parsing so the
+// DB logic is unit-testable.
 type provisionInput struct {
-	SchoolID    string
-	OwnerID     string
-	Name        string
-	Region      string // "NI" | "GB"
-	Onboarding  string // "open" | "approval"
-	OwnerEmail  string
-	OwnerName   string
-	FirebaseUID any // nil → NULL in the users row
+	SchoolID     string
+	OwnerID      string
+	Name         string
+	Region       string // "NI" | "GB"
+	Onboarding   string // "open" | "approval"
+	OwnerEmail   string
+	OwnerName    string
+	PasswordHash string // bcrypt hash written to the owner's users row
 }
 
 func (in provisionInput) validate() error {
@@ -219,9 +180,9 @@ func provisionSchool(ctx context.Context, d *sql.DB, in provisionInput) error {
 		return fmt.Errorf("insert school: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO users (id, school_id, email, password_hash, name, role, account_status, created_at, firebase_uid)
-		VALUES (?, ?, ?, '', ?, 'owner', 'active', ?, ?)
-	`, in.OwnerID, in.SchoolID, in.OwnerEmail, in.OwnerName, createdAt, in.FirebaseUID); err != nil {
+		INSERT INTO users (id, school_id, email, password_hash, name, role, account_status, created_at)
+		VALUES (?, ?, ?, ?, ?, 'owner', 'active', ?)
+	`, in.OwnerID, in.SchoolID, in.OwnerEmail, in.PasswordHash, in.OwnerName, createdAt); err != nil {
 		return fmt.Errorf("insert owner: %w", err)
 	}
 	return tx.Commit()
