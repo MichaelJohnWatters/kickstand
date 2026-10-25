@@ -93,3 +93,53 @@ func TestLogin_DisabledWhenNoTokenService(t *testing.T) {
 		t.Errorf("no token service: status = %d, want 503", rec.Code)
 	}
 }
+
+func postSignup(t *testing.T, s *Server, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/auth/signup", strings.NewReader(body))
+	s.handleSignup(rec, req)
+	return rec
+}
+
+func TestSignup_ThenLogin(t *testing.T) {
+	s := loginServer(t) // seeds school sch1 (onboarding defaults to 'open')
+	rec := postSignup(t, s, `{"schoolId":"sch1","name":"New Rider","email":"NEW@test.co","password":"a-good-password"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("signup status = %d, want 201 (%s)", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Token    string `json:"token"`
+		Identity struct {
+			Role          string `json:"role"`
+			AccountStatus string `json:"accountStatus"`
+			Email         string `json:"email"`
+		} `json:"identity"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Token == "" || resp.Identity.Role != "student" || resp.Identity.AccountStatus != "active" || resp.Identity.Email != "new@test.co" {
+		t.Fatalf("unexpected signup response: %s", rec.Body.String())
+	}
+	// The new account can log in with the chosen password.
+	if lr := postLogin(t, s, `{"schoolId":"sch1","email":"new@test.co","password":"a-good-password"}`); lr.Code != http.StatusOK {
+		t.Errorf("login after signup: status = %d, want 200 (%s)", lr.Code, lr.Body.String())
+	}
+}
+
+func TestSignup_RejectsShortPassword(t *testing.T) {
+	s := loginServer(t)
+	rec := postSignup(t, s, `{"schoolId":"sch1","name":"X","email":"x@test.co","password":"short"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("short password: status = %d, want 400 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSignup_DuplicateEmail(t *testing.T) {
+	s := loginServer(t) // already has sam@test.co
+	rec := postSignup(t, s, `{"schoolId":"sch1","name":"Dup","email":"sam@test.co","password":"a-good-password"}`)
+	if rec.Code != http.StatusConflict {
+		t.Errorf("duplicate email: status = %d, want 409 (%s)", rec.Code, rec.Body.String())
+	}
+}

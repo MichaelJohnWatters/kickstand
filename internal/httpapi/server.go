@@ -21,6 +21,7 @@ package httpapi
 import (
 	"database/sql"
 	"net/http"
+	"strings"
 
 	"github.com/michaeljohnwatters/kickstand/internal/auth"
 	"github.com/michaeljohnwatters/kickstand/internal/filestore"
@@ -82,11 +83,6 @@ type routeSpec struct {
 	handler http.HandlerFunc
 }
 
-// signupRoutePattern is the one public route we rate-limit (abuse-prone
-// self-signup). Matched by pattern in the mount loop rather than flagged on
-// routeSpec so the ~140 positional route literals stay untouched.
-const signupRoutePattern = "/auth/firebase-signup"
-
 // RouteTable returns the (method, pattern, public) triples for every
 // route the server mounts. Used by auth-coverage tests to enumerate
 // every authenticated route and verify it rejects missing/forged
@@ -107,6 +103,7 @@ func (s *Server) routeTable() []routeSpec {
 		// authenticated Firebase user".
 		{"POST", "/auth/firebase-signup", true, s.handleFirebaseSignup},
 		{"POST", "/auth/login", true, s.handleLogin},
+		{"POST", "/auth/signup", true, s.handleSignup},
 		{"GET", "/schools", true, s.handleListSchools},
 		{"GET", "/healthz", true, healthCheck},
 		{"GET", "/readyz", true, s.handleReadyz},
@@ -326,10 +323,10 @@ func (s *Server) Routes() http.Handler {
 		if !r.public {
 			h = authMW(h)
 		}
-		// Rate-limit the abuse-prone public signup route when a limiter is
-		// configured. Innermost of the per-route wrappers so a 429 is decided
-		// before the handler runs (and, for signup, before auth would be).
-		if r.pattern == signupRoutePattern && s.SignupRateLimiter != nil {
+		// Rate-limit the abuse-prone public credential routes (signup + login)
+		// when a limiter is configured — blunts signup floods + login
+		// brute-force. Innermost per-route wrapper so a 429 is decided first.
+		if strings.HasPrefix(r.pattern, "/auth/") && s.SignupRateLimiter != nil {
 			h = s.SignupRateLimiter.middleware(h)
 		}
 		mux.Handle(r.method+" "+r.pattern, h)
