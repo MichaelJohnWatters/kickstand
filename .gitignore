@@ -27,3 +27,8 @@ firebase-debug.*.log
 
 # Deploy secrets (service-account JSON etc.) — never commit these.
 deploy/secrets/
+# Stray binaries from `go build ./cmd/...` without -o (build into /bin instead)
+/provision
+/server
+/backup
+/seed
