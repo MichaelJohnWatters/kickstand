@@ -184,6 +184,7 @@ var authMatrix = []accessRow{
 	// Signup approval queue — admin/owner.
 	{"GET", "/signups/pending", adminOwner, nil},
 	{"GET", "/signups/rejected", adminOwner, nil},
+	{"GET", "/signups/approved", adminOwner, nil},
 	{"POST", "/signups/{id}/approve", adminOwner, nil},
 	{"POST", "/signups/{id}/reject", adminOwner, nil},
 	{"POST", "/signups/{id}/restore", adminOwner, nil},
@@ -349,7 +350,7 @@ func newMatrixFixture(t *testing.T) *matrixFixture {
 // is designed to catch.
 func TestAuth_RoleAccessMatrix_Complete(t *testing.T) {
 	f := newMatrixFixture(t)
-	routes := httpapi.NewServer(f.db, nil, f.fb).RouteTable()
+	routes := httpapi.NewServer(f.db, nil).RouteTable()
 	declared := map[string]bool{}
 	for _, row := range authMatrix {
 		declared[row.method+" "+row.pattern] = true

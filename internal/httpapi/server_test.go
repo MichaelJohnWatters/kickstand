@@ -3,63 +3,41 @@ package httpapi_test
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
-	firebaseauth "firebase.google.com/go/v4/auth"
-
 	"github.com/michaeljohnwatters/kickstand/internal/auth"
 	"github.com/michaeljohnwatters/kickstand/internal/db"
+	"github.com/michaeljohnwatters/kickstand/internal/domain"
 	"github.com/michaeljohnwatters/kickstand/internal/filestore"
 	"github.com/michaeljohnwatters/kickstand/internal/httpapi"
 )
 
-// apiFixture runs a real Server against a real SQLite file and a real
-// Firebase Auth Emulator. Black-box: tests only touch the HTTP surface
-// and the test seed, never internal types.
+// apiFixture runs a real Server against a real SQLite file. Black-box: tests
+// only touch the HTTP surface and the test seed, never internal types.
 //
-// All token-minting goes through the emulator — there's no in-process
-// shortcut any more. The fixture creates a Firebase user per call to
-// mintToken, exchanges a custom token for a real ID token via the
-// emulator REST endpoint, and lets the server's middleware verify it
-// the same way production traffic does.
-//
-// Tests are skipped when FIREBASE_AUTH_EMULATOR_HOST isn't set. Use
-// `make emulator-test` (which starts the emulator and exports the env)
-// to run the full suite locally.
+// Auth is hand-rolled: the fixture's TokenService mints the same HS256 access
+// tokens /auth/login issues, so mintToken(userID) hands a test a Bearer token
+// that the server's middleware verifies exactly like production traffic. No
+// external services — the whole suite runs under plain `go test`.
 type apiFixture struct {
-	t         *testing.T
-	db        *sql.DB
-	srv       *httptest.Server
-	fb        *auth.FirebaseClient
-	emuHost   string
-	projectID string
-	// uidPrefix isolates Firebase users between fixtures so parallel
-	// runs (or repeated runs in the same emulator process) don't
-	// collide on UIDs like "user_stu".
-	uidPrefix string
-	now       time.Time
+	t      *testing.T
+	db     *sql.DB
+	srv    *httptest.Server
+	tokens *auth.TokenService
+	now    time.Time
 }
+
+// testSigningKey is a fixed 32-byte HS256 key for the test TokenService.
+const testSigningKey = "test-signing-key-0123456789abcdef"
 
 func newAPIFixture(t *testing.T) *apiFixture {
 	t.Helper()
-	emuHost := os.Getenv("FIREBASE_AUTH_EMULATOR_HOST")
-	if emuHost == "" {
-		t.Skip("FIREBASE_AUTH_EMULATOR_HOST not set; run `make emulator` then `make emulator-test`")
-	}
-	projectID := os.Getenv("FIREBASE_PROJECT_ID")
-	if projectID == "" {
-		projectID = "kickstand-dev"
-	}
 
 	path := t.TempDir() + "/api_test.db"
 	d, err := db.Open(path)
@@ -77,37 +55,26 @@ func newAPIFixture(t *testing.T) *apiFixture {
 	if err != nil {
 		t.Fatalf("filestore: %v", err)
 	}
-	fb, err := auth.NewFirebaseClient(ctx)
+	tokens, err := auth.NewTokenService([]byte(testSigningKey))
 	if err != nil {
-		t.Fatalf("firebase init: %v", err)
-	}
-	if fb == nil {
-		t.Fatal("firebase client nil — FIREBASE_AUTH_EMULATOR_HOST is set but the SDK didn't pick it up")
+		t.Fatalf("token service: %v", err)
 	}
 
-	api := httpapi.NewServer(d, files, fb)
+	api := httpapi.NewServer(d, files)
+	api.Tokens = tokens
 	srv := httptest.NewServer(api.Routes())
 	t.Cleanup(srv.Close)
 
 	f := &apiFixture{
-		t:         t,
-		db:        d,
-		srv:       srv,
-		fb:        fb,
-		emuHost:   emuHost,
-		projectID: projectID,
-		uidPrefix: randomPrefix(),
+		t:      t,
+		db:     d,
+		srv:    srv,
+		tokens: tokens,
 		// Anchor at real wallclock so seeded sessions stay in the future
 		// no matter what date the test happens to run on. (Booking engine
 		// uses time.Now() directly for its "session not started" check.)
 		now: time.Now().UTC(),
 	}
-	// Fresh emulator on every fixture — between tests and between
-	// `go test` runs. Without this, state from earlier sessions
-	// (especially Firebase users created via handlers like
-	// InviteInstructor that we don't track per-call) leaks forward
-	// and causes spurious "email already exists" failures.
-	f.clearEmulator()
 	f.seed()
 	return f
 }
@@ -185,170 +152,42 @@ func (f *apiFixture) do(method, path string, body any, token string) (*http.Resp
 	return resp, buf.Bytes()
 }
 
-// mintToken issues a real Firebase ID token for the given local user.
-//
-// Steps:
-//  1. Ensure a Firebase user exists with UID = <fixture-prefix>_<userID>.
-//     Idempotent — re-creates are ignored.
-//  2. Link the UID to the local users row (UPDATE firebase_uid).
-//  3. Mint a custom token via the Admin SDK and exchange it for an ID
-//     token via the emulator's REST endpoint — same dance Flutter does
-//     post-cutover.
-//  4. Register a cleanup so the Firebase user gets deleted after the
-//     test, keeping the emulator's user store small.
-//
-// The fixture prefix isolates UIDs so two fixtures (or repeated runs in
-// the same emulator session) don't collide on names like "user_stu".
+// mintToken issues a hand-rolled access token for the given local user —
+// the same HS256 JWT /auth/login returns. The user must already exist in
+// the DB (the middleware re-loads role/status from it on every request).
 func (f *apiFixture) mintToken(userID string) string {
 	f.t.Helper()
-	ctx := context.Background()
-	uid := f.uidPrefix + "_" + userID
-
-	// Look up the email so the Firebase user is identifiable in the
-	// emulator UI, but it's not load-bearing for the verify path.
-	var email string
-	if err := f.db.QueryRow(`SELECT email FROM users WHERE id = ?`, userID).Scan(&email); err != nil {
+	var one int
+	if err := f.db.QueryRow(`SELECT 1 FROM users WHERE id = ?`, userID).Scan(&one); err != nil {
 		f.t.Fatalf("mintToken: user %q not found: %v", userID, err)
 	}
-
-	_, err := f.fb.Auth.CreateUser(ctx, (&firebaseauth.UserToCreate{}).
-		UID(uid).
-		Email(email).
-		Password("test-only-password-never-used").
-		EmailVerified(true))
-	if err != nil && !firebaseauth.IsUIDAlreadyExists(err) && !firebaseauth.IsEmailAlreadyExists(err) {
-		f.t.Fatalf("mintToken: create firebase user %q: %v", uid, err)
-	}
-	f.t.Cleanup(func() {
-		_ = f.fb.Auth.DeleteUser(ctx, uid)
-	})
-
-	if _, err := f.db.Exec(`UPDATE users SET firebase_uid = ? WHERE id = ?`, uid, userID); err != nil {
-		f.t.Fatalf("mintToken: link firebase_uid: %v", err)
-	}
-
-	idToken, err := f.exchangeCustomToken(ctx, uid)
+	token, err := f.tokens.IssueAccess(domain.UserID(userID), time.Hour, f.now)
 	if err != nil {
-		f.t.Fatalf("mintToken: exchange: %v", err)
+		f.t.Fatalf("mintToken: issue: %v", err)
 	}
-	return idToken
+	return token
 }
 
 func (f *apiFixture) loginStudent() string {
 	return f.mintToken("user_stu")
 }
 
-// clearEmulator deletes every user from the Firebase Auth emulator
-// project. Called inside the fixture cleanup to keep state from
-// leaking between tests (and across `go test` runs — the emulator
-// persists in-process for its whole lifetime).
-//
-// Uses the emulator REST endpoint instead of the Admin SDK because the
-// SDK doesn't expose a "delete all" — only paged iteration + per-user
-// delete, which is slower and noisier in tests.
-func (f *apiFixture) clearEmulator() {
-	url := "http://" + f.emuHost + "/emulator/v1/projects/" + f.projectID + "/accounts"
-	req, _ := http.NewRequest("DELETE", url, nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return
-	}
-	resp.Body.Close()
-}
-
-// signupViaFirebase performs the full client-side dance that Flutter does
-// when a new student signs up:
-//
-//  1. Create a Firebase user (email + dummy password) via the Admin SDK.
-//  2. Mint a custom token and exchange it for an ID token.
-//  3. POST /auth/firebase-signup with the ID token + profile body.
-//
-// Returns the HTTP response, the response body, and the ID token so the
-// caller can make follow-up authenticated calls. Profile-write failures
-// are surfaced to the caller — the helper doesn't assert on status.
-func (f *apiFixture) signupViaFirebase(profileBody map[string]any) (*http.Response, []byte, string) {
+// signupViaPassword performs a student self-signup through the public
+// /auth/signup endpoint. A password is injected if the profile body doesn't
+// carry one. Returns the HTTP response, the body, and the access token from
+// a successful (201) signup (empty on failure). Profile-write failures are
+// surfaced to the caller — the helper doesn't assert on status.
+func (f *apiFixture) signupViaPassword(profileBody map[string]any) (*http.Response, []byte, string) {
 	f.t.Helper()
-	ctx := context.Background()
-
-	emailVal, _ := profileBody["email"].(string)
-	email := strings.ToLower(strings.TrimSpace(emailVal))
-	if email == "" {
-		f.t.Fatal("signupViaFirebase: profileBody.email required")
+	if _, ok := profileBody["password"]; !ok {
+		profileBody["password"] = "a-good-password"
 	}
-
-	uid := f.uidPrefix + "_signup_" + randomShort()
-	if _, err := f.fb.Auth.CreateUser(ctx, (&firebaseauth.UserToCreate{}).
-		UID(uid).
-		Email(email).
-		Password("test-only-password-never-used").
-		EmailVerified(true)); err != nil && !firebaseauth.IsUIDAlreadyExists(err) && !firebaseauth.IsEmailAlreadyExists(err) {
-		f.t.Fatalf("signupViaFirebase: create firebase user: %v", err)
-	}
-	f.t.Cleanup(func() { _ = f.fb.Auth.DeleteUser(ctx, uid) })
-
-	idToken, err := f.exchangeCustomToken(ctx, uid)
-	if err != nil {
-		f.t.Fatalf("signupViaFirebase: exchange: %v", err)
-	}
-	resp, body := f.do("POST", "/auth/firebase-signup", profileBody, idToken)
-	return resp, body, idToken
-}
-
-func randomShort() string {
-	var b [3]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
-}
-
-// exchangeCustomToken mints a custom JWT via the Admin SDK and then
-// calls the emulator's REST endpoint signInWithCustomToken to get back
-// an ID token. This is the same exchange the Flutter SDK does — we're
-// just doing it explicitly because tests don't run a Firebase client.
-func (f *apiFixture) exchangeCustomToken(ctx context.Context, uid string) (string, error) {
-	customToken, err := f.fb.Auth.CustomToken(ctx, uid)
-	if err != nil {
-		return "", err
-	}
-	payload, _ := json.Marshal(map[string]any{
-		"token":             customToken,
-		"returnSecureToken": true,
-	})
-	// The emulator ignores the apiKey value but the URL requires it.
-	url := "http://" + f.emuHost +
-		"/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=emulator"
-	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return "", &exchangeErr{status: resp.StatusCode, body: string(raw)}
-	}
+	resp, body := f.do("POST", "/auth/signup", profileBody, "")
 	var out struct {
-		IDToken string `json:"idToken"`
+		Token string `json:"token"`
 	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return "", err
-	}
-	return out.IDToken, nil
-}
-
-type exchangeErr struct {
-	status int
-	body   string
-}
-
-func (e *exchangeErr) Error() string {
-	return "exchange failed: status=" + http.StatusText(e.status) + " body=" + e.body
-}
-
-func randomPrefix() string {
-	var b [6]byte
-	_, _ = rand.Read(b[:])
-	return "fx" + hex.EncodeToString(b[:])
+	_ = json.Unmarshal(body, &out)
+	return resp, body, out.Token
 }
 
 // ----- Tests -----

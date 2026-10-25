@@ -91,32 +91,9 @@ func main() {
 		log.Info("filestore: local disk", slog.String("dir", *uploadsDir))
 	}
 
-	// Firebase Admin SDK — returns (nil, nil) when no Firebase env vars
-	// are set. The HTTP middleware dispatches by token shape, so when
-	// `fb == nil` only legacy opaque tokens work; a Firebase JWT lands
-	// at 401 because there's nothing to verify it against. Log the mode
-	// once so a sleepy dev can spot misconfig at a glance.
-	fb, err := auth.NewFirebaseClient(rootCtx)
-	if err != nil {
-		log.Error("firebase init", slog.String("err", err.Error()))
-		os.Exit(1)
-	}
-	switch {
-	case fb == nil:
-		log.Info("auth: legacy session-token mode only",
-			slog.String("hint", "set FIREBASE_AUTH_EMULATOR_HOST or GOOGLE_APPLICATION_CREDENTIALS to enable Firebase JWT verification"))
-	case os.Getenv("FIREBASE_AUTH_EMULATOR_HOST") != "":
-		log.Info("auth: firebase enabled (emulator)",
-			slog.String("emulator", os.Getenv("FIREBASE_AUTH_EMULATOR_HOST")),
-			slog.String("project", os.Getenv("FIREBASE_PROJECT_ID")))
-	default:
-		log.Info("auth: firebase enabled (production credentials)",
-			slog.String("project", os.Getenv("FIREBASE_PROJECT_ID")))
-	}
-
 	// Production boot-gate: refuse to start with a dev/insecure config when
 	// APP_ENV=production. Fail fast rather than ship a dev gate to prod.
-	if problems := productionBootProblems(os.Getenv, fb != nil); len(problems) > 0 {
+	if problems := productionBootProblems(os.Getenv); len(problems) > 0 {
 		for _, p := range problems {
 			log.Error("production boot-gate failed", slog.String("problem", p))
 		}
@@ -126,11 +103,11 @@ func main() {
 		log.Info("production boot-gate: passed")
 	}
 
-	srv := httpapi.NewServer(d, files, fb)
+	srv := httpapi.NewServer(d, files)
 	srv.MaxBodyBytes = *maxBodyBytes
-	// Hand-rolled email/password auth: enabled when JWT_SIGNING_KEY is set.
-	// The middleware then accepts our access tokens (preferred) with Firebase
-	// as the migration fallback; /auth/login issues them.
+	// Hand-rolled email/password auth. JWT_SIGNING_KEY is required in
+	// production (enforced by the boot-gate); without it the middleware 503s
+	// every authenticated request. /auth/login + /auth/refresh issue tokens.
 	if key := os.Getenv("JWT_SIGNING_KEY"); key != "" {
 		ts, err := auth.NewTokenService([]byte(key))
 		if err != nil {
@@ -139,6 +116,8 @@ func main() {
 		}
 		srv.Tokens = ts
 		log.Info("auth: password login enabled (hand-rolled tokens)")
+	} else {
+		log.Warn("auth: JWT_SIGNING_KEY unset — authenticated requests will 503 until it's provided")
 	}
 	// CORS allow-list for production. Comma-separated origins, e.g.
 	// "https://app.kickstand.example". Empty → dev mode (localhost only).
@@ -347,7 +326,7 @@ func runEmailWorker(ctx context.Context, d *sql.DB, sender email.Sender, interva
 // productionBootProblems returns the reasons the server must refuse to boot
 // when APP_ENV=production — a dev/insecure config reaching prod. Empty = safe.
 // Pure (env injected) so it's unit-testable.
-func productionBootProblems(get func(string) string, firebaseConfigured bool) []string {
+func productionBootProblems(get func(string) string) []string {
 	if get("APP_ENV") != "production" {
 		return nil
 	}
@@ -355,14 +334,13 @@ func productionBootProblems(get func(string) string, firebaseConfigured bool) []
 	if get("CORS_ALLOWED_ORIGINS") == "" {
 		problems = append(problems, "CORS_ALLOWED_ORIGINS must be set in production")
 	}
-	if get("FIREBASE_AUTH_EMULATOR_HOST") != "" {
-		problems = append(problems, "FIREBASE_AUTH_EMULATOR_HOST must not be set in production")
+	// Auth is hand-rolled JWT: without a signing key every authenticated
+	// request 503s, so a prod boot without one is a misconfiguration.
+	if len(get("JWT_SIGNING_KEY")) < 32 {
+		problems = append(problems, "JWT_SIGNING_KEY must be set (≥32 bytes) in production")
 	}
 	if get("STORAGE_EMULATOR_HOST") != "" || get("FIREBASE_STORAGE_EMULATOR_HOST") != "" {
 		problems = append(problems, "storage emulator env must not be set in production")
-	}
-	if !firebaseConfigured {
-		problems = append(problems, "Firebase must be configured in production (GOOGLE_APPLICATION_CREDENTIALS + FIREBASE_PROJECT_ID)")
 	}
 	return problems
 }

@@ -90,12 +90,11 @@ func TestAudit_MutationsAreLogged(t *testing.T) {
 	}
 }
 
-// Self-signup is the only public mutating route. The handler does its
-// own Firebase verification, then publishes the resolved identity into
-// the request state so the audit middleware picks it up.
-func TestAudit_FirebaseSignupIsLogged(t *testing.T) {
+// Self-signup is the only public mutating route. The handler publishes the
+// resolved identity into the request state so the audit middleware picks it up.
+func TestAudit_SignupIsLogged(t *testing.T) {
 	f := newSignupFixture(t, "open")
-	resp, body, _ := f.signupViaFirebase(map[string]any{
+	resp, body, _ := f.signupViaPassword(map[string]any{
 		"schoolId":               "school_t",
 		"name":                   "Audit Trail Tom",
 		"email":                  "audit-tom@test.com",
@@ -106,7 +105,7 @@ func TestAudit_FirebaseSignupIsLogged(t *testing.T) {
 	if resp.StatusCode != 201 {
 		t.Fatalf("signup: %d body=%s", resp.StatusCode, body)
 	}
-	row := lastAuditRow(t, f.db, "POST", "/auth/firebase-signup")
+	row := lastAuditRow(t, f.db, "POST", "/auth/signup")
 	if row.statusCode != 201 {
 		t.Errorf("signup audit: status = %d, want 201", row.statusCode)
 	}

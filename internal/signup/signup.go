@@ -2,9 +2,8 @@
 //
 // Per plan §3 ("Student onboarding"):
 //
-//   - Students self-sign-up via Firebase Auth (Flutter calls
-//     createUserWithEmailAndPassword), then POST their profile body
-//     to /auth/firebase-signup with the resulting JWT.
+//   - Students self-sign-up with email + password via POST /auth/signup,
+//     which hashes the password and writes the profile in one step.
 //   - The per-school setting `onboarding_mode` decides what happens next:
 //   - 'open'     → account_status = 'active', can book immediately
 //   - 'approval' → account_status = 'pending_approval', manager reviews
@@ -61,97 +60,6 @@ func ListSchools(ctx context.Context, d *sql.DB) ([]PublicSchool, error) {
 	return out, rows.Err()
 }
 
-// FirebaseSignupRequest is the payload from POST /auth/firebase-signup.
-// Identity (email, password) is already established with Firebase by the
-// time we see this; the body just carries the profile data we own.
-type FirebaseSignupRequest struct {
-	FirebaseUID            string
-	SchoolID               domain.SchoolID
-	Name                   string
-	Email                  string
-	Phone                  string
-	TransmissionPreference domain.Transmission
-	LicenceCategoryPursued domain.LicenceCategory
-	DateOfBirth            string // YYYY-MM-DD
-}
-
-// SignupWithFirebase writes the local profile row(s) for a user whose
-// Firebase identity has already been verified upstream. No password
-// hashing, no session token — the client's Firebase SDK already has
-// its ID token. Returns the resulting Identity, including account
-// status (active vs pending) based on the school's onboarding_mode.
-func SignupWithFirebase(ctx context.Context, d *sql.DB, req FirebaseSignupRequest) (*auth.Identity, error) {
-	return signupFirebaseAt(ctx, d, req, time.Now)
-}
-
-func signupFirebaseAt(ctx context.Context, d *sql.DB, req FirebaseSignupRequest, nowFn func() time.Time) (*auth.Identity, error) {
-	if err := validateFirebaseReq(req); err != nil {
-		return nil, err
-	}
-
-	var (
-		schoolName     string
-		onboardingMode string
-	)
-	err := d.QueryRowContext(ctx,
-		`SELECT name, onboarding_mode FROM schools WHERE id = ?`,
-		string(req.SchoolID),
-	).Scan(&schoolName, &onboardingMode)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrSchoolNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("lookup school: %w", err)
-	}
-
-	status := domain.AccountActive
-	if onboardingMode == "approval" {
-		status = domain.AccountPendingApproval
-	}
-
-	now := nowFn().UTC()
-	userID := domain.UserID(domain.NewID())
-	scope := tenant.NewScope(d, req.SchoolID)
-	err = scope.WithTx(ctx, func(tx *tenant.Scope) error {
-		// password_hash is a vestigial NOT NULL column from before the
-		// Firebase migration — write empty string. Dropped by a follow-up
-		// migration.
-		_, err := tx.Conn().ExecContext(ctx, `
-			INSERT INTO users (id, school_id, email, phone, password_hash, name, role, account_status, created_at, firebase_uid)
-			VALUES (?, ?, ?, ?, '', ?, 'student', ?, ?, ?)
-		`, string(userID), string(req.SchoolID),
-			strings.ToLower(strings.TrimSpace(req.Email)), req.Phone, req.Name,
-			string(status), now.Format(time.RFC3339), req.FirebaseUID)
-		if err != nil {
-			if isUniqueViolation(err) {
-				return ErrEmailAlreadyInUse
-			}
-			return fmt.Errorf("insert user: %w", err)
-		}
-		_, err = tx.Conn().ExecContext(ctx, `
-			INSERT INTO student_profiles (user_id, school_id, transmission_preference,
-			    licence_category_pursued, rider_date_of_birth, cbt_certificate_held, theory_passed)
-			VALUES (?, ?, ?, ?, ?, 0, 0)
-		`, string(userID), string(req.SchoolID),
-			nullIfEmpty(string(req.TransmissionPreference)),
-			nullIfEmpty(string(req.LicenceCategoryPursued)),
-			nullIfEmpty(req.DateOfBirth))
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &auth.Identity{
-		UserID:        userID,
-		SchoolID:      req.SchoolID,
-		Role:          domain.RoleStudent,
-		AccountStatus: status,
-		Email:         strings.ToLower(strings.TrimSpace(req.Email)),
-		Name:          req.Name,
-		FirebaseUID:   req.FirebaseUID,
-	}, nil
-}
-
 // SignupRequest is the payload for hand-rolled email/password self-signup
 // (POST /auth/signup) — the replacement for the Firebase flow. Password is the
 // plaintext the user chose; it's hashed before storage.
@@ -204,7 +112,6 @@ func registerAt(ctx context.Context, d *sql.DB, req SignupRequest, nowFn func() 
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	scope := tenant.NewScope(d, req.SchoolID)
 	err = scope.WithTx(ctx, func(tx *tenant.Scope) error {
-		// firebase_uid omitted → NULL: this is a password account.
 		_, err := tx.Conn().ExecContext(ctx, `
 			INSERT INTO users (id, school_id, email, phone, password_hash, name, role, account_status, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, 'student', ?, ?)
@@ -239,14 +146,7 @@ func registerAt(ctx context.Context, d *sql.DB, req SignupRequest, nowFn func() 
 	}, nil
 }
 
-func validateFirebaseReq(req FirebaseSignupRequest) error {
-	if req.FirebaseUID == "" {
-		return ErrMissingField
-	}
-	return validateProfile(req.SchoolID, req.Name, req.Email, req.TransmissionPreference, req.LicenceCategoryPursued)
-}
-
-// validateProfile checks the fields common to both signup paths. The
+// validateProfile checks the signup profile fields. The
 // transmission/licence enums are optional (nullable) but CHECK-constrained, so
 // a non-empty unknown value is rejected up front rather than after insert.
 func validateProfile(schoolID domain.SchoolID, name, email string, trans domain.Transmission, lic domain.LicenceCategory) error {

@@ -1,10 +1,11 @@
 package httpapi_test
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/michaeljohnwatters/kickstand/internal/auth"
 )
 
 // All admin endpoints share the same fixture: admin token, student token,
@@ -274,26 +275,22 @@ func TestAdmin_InviteInstructor_AndSetAccreditations(t *testing.T) {
 		t.Errorf("expected expiresOn 2027-01-01, got %q", i.Accreditations[0].ExpiresOn)
 	}
 
-	// InviteInstructor should have created a Firebase user with UID
-	// pinned to the local user_id, and stored that UID on the row.
-	var firebaseUID string
-	if err := f.db.QueryRow(`SELECT COALESCE(firebase_uid, '') FROM users WHERE id = ?`, i.UserID).
-		Scan(&firebaseUID); err != nil {
-		t.Fatalf("read firebase_uid: %v", err)
+	// InviteInstructor should have stored a bcrypt hash of the supplied
+	// password (and no firebase_uid) — the instructor signs in with
+	// email + that password.
+	var passwordHash, firebaseUID string
+	if err := f.db.QueryRow(`SELECT password_hash, COALESCE(firebase_uid, '') FROM users WHERE id = ?`, i.UserID).
+		Scan(&passwordHash, &firebaseUID); err != nil {
+		t.Fatalf("read user: %v", err)
 	}
-	if firebaseUID == "" {
-		t.Error("expected firebase_uid to be set on invited instructor")
+	if err := auth.CheckPassword(passwordHash, "longenoughpw"); err != nil {
+		t.Errorf("stored password hash should verify the supplied password: %v", err)
 	}
-	if firebaseUID != i.UserID {
-		t.Errorf("expected firebase_uid to equal user_id (UID pinning), got %q vs %q", firebaseUID, i.UserID)
+	if firebaseUID != "" {
+		t.Errorf("expected firebase_uid to be NULL, got %q", firebaseUID)
 	}
-	if _, err := f.fb.Auth.GetUser(context.Background(), firebaseUID); err != nil {
-		t.Errorf("Firebase user not found: %v", err)
-	}
-	t.Cleanup(func() { _ = f.fb.Auth.DeleteUser(context.Background(), firebaseUID) })
 
-	// Duplicate-email invite — Firebase rejects and our handler maps it
-	// to a 409 with the right code.
+	// Duplicate-email invite — the unique constraint maps to a 409.
 	resp, body = f.do("POST", "/instructors", map[string]any{
 		"name": "Priya Twin", "email": "priya@test.com",
 		"password": "longenoughpw", "homeLocationId": "loc_t",
@@ -301,8 +298,8 @@ func TestAdmin_InviteInstructor_AndSetAccreditations(t *testing.T) {
 	if resp.StatusCode != 409 {
 		t.Errorf("expected 409 duplicate, got %d body=%s", resp.StatusCode, body)
 	}
-	if !strings.Contains(string(body), "email_in_use") {
-		t.Errorf("expected email_in_use code, got %s", body)
+	if !strings.Contains(string(body), "conflict") {
+		t.Errorf("expected conflict code, got %s", body)
 	}
 
 	// Clear accreditations
@@ -344,19 +341,18 @@ func TestAdmin_CreateStudent(t *testing.T) {
 		t.Errorf("unexpected initial row: %+v", st)
 	}
 
-	// Firebase identity should exist and be pinned to the local user_id.
-	var firebaseUID string
-	if err := f.db.QueryRow(`SELECT COALESCE(firebase_uid, '') FROM users WHERE id = ?`, st.ID).
-		Scan(&firebaseUID); err != nil {
-		t.Fatalf("read firebase_uid: %v", err)
+	// The supplied password should be bcrypt-hashed onto the row (no Firebase).
+	var passwordHash, firebaseUID string
+	if err := f.db.QueryRow(`SELECT password_hash, COALESCE(firebase_uid, '') FROM users WHERE id = ?`, st.ID).
+		Scan(&passwordHash, &firebaseUID); err != nil {
+		t.Fatalf("read user: %v", err)
 	}
-	if firebaseUID != st.ID {
-		t.Errorf("expected firebase_uid == user_id, got %q vs %q", firebaseUID, st.ID)
+	if err := auth.CheckPassword(passwordHash, "longenoughpw"); err != nil {
+		t.Errorf("stored password hash should verify the supplied password: %v", err)
 	}
-	if _, err := f.fb.Auth.GetUser(context.Background(), firebaseUID); err != nil {
-		t.Errorf("Firebase user not found: %v", err)
+	if firebaseUID != "" {
+		t.Errorf("expected firebase_uid to be NULL, got %q", firebaseUID)
 	}
-	t.Cleanup(func() { _ = f.fb.Auth.DeleteUser(context.Background(), firebaseUID) })
 
 	// New student must show up in GET /students.
 	resp, body = f.do("GET", "/students", nil, f.adminToken)
@@ -364,16 +360,16 @@ func TestAdmin_CreateStudent(t *testing.T) {
 		t.Errorf("expected Rowan in list, got %d body=%s", resp.StatusCode, body)
 	}
 
-	// Duplicate-email — Firebase rejects, handler returns 409.
+	// Duplicate-email — the unique constraint maps to a 409 conflict.
 	resp, body = f.do("POST", "/students", map[string]any{
 		"name": "Rowan Twin", "email": "rowan-new@test.com",
 		"password": "longenoughpw",
 	}, f.adminToken)
-	if resp.StatusCode != 409 || !strings.Contains(string(body), "email_in_use") {
-		t.Errorf("expected 409 email_in_use, got %d body=%s", resp.StatusCode, body)
+	if resp.StatusCode != 409 || !strings.Contains(string(body), "conflict") {
+		t.Errorf("expected 409 conflict, got %d body=%s", resp.StatusCode, body)
 	}
 
-	// Short password rejected before we hit Firebase.
+	// Short password rejected before any DB write.
 	resp, _ = f.do("POST", "/students", map[string]any{
 		"name": "Short Pw", "email": "shortpw@test.com", "password": "abc",
 	}, f.adminToken)

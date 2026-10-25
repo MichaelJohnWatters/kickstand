@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/michaeljohnwatters/kickstand/internal/auth"
 	"github.com/michaeljohnwatters/kickstand/internal/db"
 	"github.com/michaeljohnwatters/kickstand/internal/domain"
 	"github.com/michaeljohnwatters/kickstand/internal/signup"
@@ -34,21 +35,20 @@ func newSignupDB(t *testing.T) (*sql.DB, domain.SchoolID) {
 }
 
 // Omitting the optional, CHECK-constrained profile fields must store NULL and
-// succeed — not fail the student_profiles INSERT with a CHECK violation (which
-// previously left a Firebase user with no local profile).
-func TestSignupWithFirebase_OmittedEnumsStoreNull(t *testing.T) {
+// succeed — not fail the student_profiles INSERT with a CHECK violation.
+func TestRegister_OmittedEnumsStoreNull(t *testing.T) {
 	ctx := context.Background()
 	d, school := newSignupDB(t)
 
-	id, err := signup.SignupWithFirebase(ctx, d, signup.FirebaseSignupRequest{
-		FirebaseUID: "fb-uid-1",
-		SchoolID:    school,
-		Name:        "Sam Rider",
-		Email:       "sam@test.co",
+	id, err := signup.Register(ctx, d, signup.SignupRequest{
+		SchoolID: school,
+		Name:     "Sam Rider",
+		Email:    "sam@test.co",
+		Password: "a-good-password",
 		// TransmissionPreference / LicenceCategoryPursued intentionally omitted.
 	})
 	if err != nil {
-		t.Fatalf("signup with omitted enums should succeed, got: %v", err)
+		t.Fatalf("register with omitted enums should succeed, got: %v", err)
 	}
 	if id == nil {
 		t.Fatal("nil identity")
@@ -65,17 +65,16 @@ func TestSignupWithFirebase_OmittedEnumsStoreNull(t *testing.T) {
 	}
 }
 
-// A non-empty but invalid enum value is rejected up front (before the Firebase
-// user is tied to a broken profile), with a clean ErrInvalidField.
-func TestSignupWithFirebase_InvalidEnumRejected(t *testing.T) {
+// A non-empty but invalid enum value is rejected up front with ErrInvalidField.
+func TestRegister_InvalidEnumRejected(t *testing.T) {
 	ctx := context.Background()
 	d, school := newSignupDB(t)
 
-	_, err := signup.SignupWithFirebase(ctx, d, signup.FirebaseSignupRequest{
-		FirebaseUID:            "fb-uid-2",
+	_, err := signup.Register(ctx, d, signup.SignupRequest{
 		SchoolID:               school,
 		Name:                   "Bad Enum",
 		Email:                  "bad@test.co",
+		Password:               "a-good-password",
 		TransmissionPreference: domain.Transmission("automatic"), // not manual/auto
 	})
 	if !errors.Is(err, signup.ErrInvalidField) {
@@ -84,20 +83,20 @@ func TestSignupWithFirebase_InvalidEnumRejected(t *testing.T) {
 }
 
 // A valid enum value still works and is persisted.
-func TestSignupWithFirebase_ValidEnumPersisted(t *testing.T) {
+func TestRegister_ValidEnumPersisted(t *testing.T) {
 	ctx := context.Background()
 	d, school := newSignupDB(t)
 
-	id, err := signup.SignupWithFirebase(ctx, d, signup.FirebaseSignupRequest{
-		FirebaseUID:            "fb-uid-3",
+	id, err := signup.Register(ctx, d, signup.SignupRequest{
 		SchoolID:               school,
 		Name:                   "Good Enum",
 		Email:                  "good@test.co",
+		Password:               "a-good-password",
 		TransmissionPreference: domain.Transmission("auto"),
 		LicenceCategoryPursued: domain.LicenceCategory("A2"),
 	})
 	if err != nil {
-		t.Fatalf("signup: %v", err)
+		t.Fatalf("register: %v", err)
 	}
 	var trans, lic string
 	if err := d.QueryRowContext(ctx,
@@ -107,5 +106,21 @@ func TestSignupWithFirebase_ValidEnumPersisted(t *testing.T) {
 	}
 	if trans != "auto" || lic != "A2" {
 		t.Errorf("got trans=%q lic=%q, want auto/A2", trans, lic)
+	}
+}
+
+// A too-short password is rejected before any DB write.
+func TestRegister_ShortPasswordRejected(t *testing.T) {
+	ctx := context.Background()
+	d, school := newSignupDB(t)
+
+	_, err := signup.Register(ctx, d, signup.SignupRequest{
+		SchoolID: school,
+		Name:     "Shorty",
+		Email:    "short@test.co",
+		Password: "short",
+	})
+	if !errors.Is(err, auth.ErrPasswordTooShort) {
+		t.Fatalf("expected ErrPasswordTooShort, got %v", err)
 	}
 }

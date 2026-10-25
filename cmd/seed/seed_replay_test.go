@@ -87,7 +87,7 @@ func TestSeedReplayMatches(t *testing.T) {
 	applyEngine := func(events []Event, _ time.Time) error {
 		return runner.ApplyEngine(ctx, scope, events)
 	}
-	if err := seedLaganValley(ctx, dB, nil, files, applyEngine); err != nil {
+	if err := seedLaganValley(ctx, dB, files, applyEngine); err != nil {
 		t.Fatalf("seed B (engine applier): %v", err)
 	}
 

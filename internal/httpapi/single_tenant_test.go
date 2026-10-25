@@ -54,13 +54,13 @@ func TestListSchools_SingleTenantFiltersToPinnedSchool(t *testing.T) {
 	}
 
 	// Shared (no pin): both schools visible.
-	shared := NewServer(d, nil, nil)
+	shared := NewServer(d, nil)
 	if got := listIDs(shared); len(got) != 2 {
 		t.Errorf("shared mode returned %v, want both schools", got)
 	}
 
 	// Pinned: only the configured school.
-	dedicated := NewServer(d, nil, nil)
+	dedicated := NewServer(d, nil)
 	dedicated.SingleTenantSchoolID = "sch-1"
 	got := listIDs(dedicated)
 	if len(got) != 1 || got[0] != "sch-1" {

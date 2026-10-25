@@ -36,13 +36,11 @@ const defaultMaxBodyBytes = 10 << 20
 // Server holds the dependencies handlers need. Keep this struct flat — it's
 // the dependency-injection surface for handlers.
 type Server struct {
-	DB       *sql.DB
-	Files    filestore.Store      // receipt blobs (and any future file types)
-	Firebase *auth.FirebaseClient // nil when running without Firebase Auth (tests, legacy `make run` target).
-	// Tokens, when set, enables hand-rolled email/password auth: the
-	// middleware accepts our own access tokens (preferred) and /auth/login
-	// issues them. During the Firebase→hand-rolled migration both paths run;
-	// Firebase is the fallback. Set from JWT_SIGNING_KEY in main.go.
+	DB    *sql.DB
+	Files filestore.Store // receipt blobs (and any future file types)
+	// Tokens drives hand-rolled email/password auth: the middleware verifies
+	// our access tokens and /auth/login + /auth/refresh issue them. Required
+	// in production (set from JWT_SIGNING_KEY in main.go); tests set their own.
 	Tokens *auth.TokenService
 	// EmailSender delivers password-reset emails (nil = can't send; the
 	// request endpoint still returns 200 to avoid leaking who has an account).
@@ -70,8 +68,8 @@ type Server struct {
 	SingleTenantSchoolID string
 }
 
-func NewServer(d *sql.DB, files filestore.Store, fb *auth.FirebaseClient) *Server {
-	return &Server{DB: d, Files: files, Firebase: fb, MaxBodyBytes: defaultMaxBodyBytes}
+func NewServer(d *sql.DB, files filestore.Store) *Server {
+	return &Server{DB: d, Files: files, MaxBodyBytes: defaultMaxBodyBytes}
 }
 
 // RoutePattern describes a single route mount-point. Exported so tests
@@ -106,10 +104,7 @@ func (s *Server) RouteTable() []RoutePattern {
 
 func (s *Server) routeTable() []routeSpec {
 	return []routeSpec{
-		// Public — identity is owned by Firebase, so the only auth-adjacent
-		// endpoint we expose is "create the local profile for an already-
-		// authenticated Firebase user".
-		{"POST", "/auth/firebase-signup", true, s.handleFirebaseSignup},
+		// Public auth endpoints — hand-rolled email/password.
 		{"POST", "/auth/login", true, s.handleLogin},
 		{"POST", "/auth/signup", true, s.handleSignup},
 		{"POST", "/auth/refresh", true, s.handleRefresh},

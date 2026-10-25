@@ -119,7 +119,7 @@ func ListBikeGPSHistory(ctx context.Context, scope *tenant.Scope, id domain.Bike
 		SELECT at, lat, lng
 		FROM bike_gps_fixes
 		WHERE `+where+`
-		ORDER BY at DESC
+		ORDER BY at DESC, rowid DESC
 		LIMIT ?
 	`, args...)
 	if err != nil {

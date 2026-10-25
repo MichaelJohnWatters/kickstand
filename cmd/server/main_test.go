@@ -8,11 +8,14 @@ func TestProductionBootProblems(t *testing.T) {
 		return func(k string) string { return m[k] }
 	}
 
+	// A valid signing key for the clean-config case (≥32 bytes).
+	const signingKey = "0123456789abcdef0123456789abcdef"
+
 	t.Run("non-production: no gate", func(t *testing.T) {
 		// Even a totally dev config is fine when APP_ENV isn't production.
 		got := productionBootProblems(env(map[string]string{
-			"FIREBASE_AUTH_EMULATOR_HOST": "localhost:9099",
-		}), false)
+			"STORAGE_EMULATOR_HOST": "localhost:9199",
+		}))
 		if len(got) != 0 {
 			t.Fatalf("expected no problems outside production, got %v", got)
 		}
@@ -22,7 +25,8 @@ func TestProductionBootProblems(t *testing.T) {
 		got := productionBootProblems(env(map[string]string{
 			"APP_ENV":              "production",
 			"CORS_ALLOWED_ORIGINS": "https://app.example",
-		}), true)
+			"JWT_SIGNING_KEY":      signingKey,
+		}))
 		if len(got) != 0 {
 			t.Fatalf("expected clean prod config to pass, got %v", got)
 		}
@@ -30,14 +34,13 @@ func TestProductionBootProblems(t *testing.T) {
 
 	t.Run("production: flags every dev/insecure setting", func(t *testing.T) {
 		got := productionBootProblems(env(map[string]string{
-			"APP_ENV":                     "production",
-			"FIREBASE_AUTH_EMULATOR_HOST": "localhost:9099",
-			"STORAGE_EMULATOR_HOST":       "localhost:9199",
-			// CORS unset, firebase not configured
-		}), false)
-		// Expect: missing CORS, auth emulator, storage emulator, no firebase.
-		if len(got) != 4 {
-			t.Fatalf("expected 4 problems, got %d: %v", len(got), got)
+			"APP_ENV":               "production",
+			"STORAGE_EMULATOR_HOST": "localhost:9199",
+			// CORS unset, JWT_SIGNING_KEY unset
+		}))
+		// Expect: missing CORS, missing signing key, storage emulator.
+		if len(got) != 3 {
+			t.Fatalf("expected 3 problems, got %d: %v", len(got), got)
 		}
 	})
 }

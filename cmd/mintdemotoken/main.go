@@ -1,80 +1,46 @@
-// Command mintdemotoken mints a Firebase ID token for the demo-data
-// dump pipeline. Connects to the running Auth emulator, asks for a
-// custom token for the requested UID (`user_owen` by default — the
-// owner role sees the full API surface), then exchanges it for an ID
-// token via the emulator REST endpoint.
+// Command mintdemotoken mints a hand-rolled access token for the demo-data
+// dump pipeline. It signs a short-lived JWT for the requested user id using
+// the same JWT_SIGNING_KEY the running server verifies against, so the dump
+// script can call the API as that user.
 //
-// Used by scripts/dump-demo.sh as part of `make demo-data`. Not shipped
-// to production — Firebase clients run this dance in-app.
+// Used by scripts/dump-demo.sh as part of `make demo-data`. Not shipped to
+// production.
 //
 // Usage:
 //
-//	mintdemotoken -uid user_owen
+//	JWT_SIGNING_KEY=... mintdemotoken -uid user_owen
 //
-// Requires FIREBASE_AUTH_EMULATOR_HOST + FIREBASE_PROJECT_ID env vars.
+// Requires JWT_SIGNING_KEY (≥32 bytes) — the same value the server uses.
 package main
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
+	"time"
 
 	"github.com/michaeljohnwatters/kickstand/internal/auth"
+	"github.com/michaeljohnwatters/kickstand/internal/domain"
 )
 
 func main() {
-	uid := flag.String("uid", "user_owen", "Firebase UID to mint a token for")
+	uid := flag.String("uid", "user_owen", "local user id to mint a token for")
 	flag.Parse()
 
-	emuHost := os.Getenv("FIREBASE_AUTH_EMULATOR_HOST")
-	if emuHost == "" {
-		fmt.Fprintln(os.Stderr, "FIREBASE_AUTH_EMULATOR_HOST not set — start `make emulator` first")
+	key := os.Getenv("JWT_SIGNING_KEY")
+	if key == "" {
+		fmt.Fprintln(os.Stderr, "JWT_SIGNING_KEY not set — use the same value the server runs with")
 		os.Exit(1)
 	}
-
-	ctx := context.Background()
-	fb, err := auth.NewFirebaseClient(ctx)
-	if err != nil || fb == nil {
-		fmt.Fprintf(os.Stderr, "firebase init: %v\n", err)
-		os.Exit(1)
-	}
-
-	customToken, err := fb.Auth.CustomToken(ctx, *uid)
+	ts, err := auth.NewTokenService([]byte(key))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "custom token: %v\n", err)
+		fmt.Fprintf(os.Stderr, "token service: %v\n", err)
 		os.Exit(1)
 	}
-
-	body, _ := json.Marshal(map[string]any{
-		"token":             customToken,
-		"returnSecureToken": true,
-	})
-	url := "http://" + emuHost +
-		"/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=emulator"
-	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	token, err := ts.IssueAccess(domain.UserID(*uid), time.Hour, time.Now())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "exchange: %v\n", err)
+		fmt.Fprintf(os.Stderr, "issue token: %v\n", err)
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		fmt.Fprintf(os.Stderr, "exchange status=%d body=%s\n", resp.StatusCode, raw)
-		os.Exit(1)
-	}
-	var out struct {
-		IDToken string `json:"idToken"`
-	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		fmt.Fprintf(os.Stderr, "decode: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Print(out.IDToken)
+	fmt.Print(token)
 }

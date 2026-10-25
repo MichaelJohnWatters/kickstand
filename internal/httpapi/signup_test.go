@@ -44,7 +44,7 @@ func TestListSchools_Public(t *testing.T) {
 
 func TestSignup_OpenMode_LandsActive(t *testing.T) {
 	f := newSignupFixture(t, "open")
-	resp, body, _ := f.signupViaFirebase(map[string]any{
+	resp, body, _ := f.signupViaPassword(map[string]any{
 		"schoolId":               "school_t",
 		"name":                   "Newbie Norman",
 		"email":                  "newbie@test.com",
@@ -62,7 +62,7 @@ func TestSignup_OpenMode_LandsActive(t *testing.T) {
 
 func TestSignup_ApprovalMode_LandsPending(t *testing.T) {
 	f := newSignupFixture(t, "approval")
-	resp, body, _ := f.signupViaFirebase(map[string]any{
+	resp, body, _ := f.signupViaPassword(map[string]any{
 		"schoolId":               "school_t",
 		"name":                   "Pending Pat",
 		"email":                  "pat@test.com",
@@ -80,7 +80,7 @@ func TestSignup_ApprovalMode_LandsPending(t *testing.T) {
 
 func TestSignup_InvalidSchool(t *testing.T) {
 	f := newSignupFixture(t, "open")
-	resp, b, _ := f.signupViaFirebase(map[string]any{
+	resp, b, _ := f.signupViaPassword(map[string]any{
 		"schoolId": "nope", "name": "X", "email": "x@y.com",
 	})
 	if resp.StatusCode != 404 || !strings.Contains(string(b), "school_not_found") {
@@ -90,7 +90,7 @@ func TestSignup_InvalidSchool(t *testing.T) {
 
 func TestSignup_PendingUserCannotBookButCanBrowse(t *testing.T) {
 	f := newSignupFixture(t, "approval")
-	resp, body, tok := f.signupViaFirebase(map[string]any{
+	resp, body, tok := f.signupViaPassword(map[string]any{
 		"schoolId": "school_t", "name": "Pending", "email": "p@t.com",
 		"transmissionPreference": "manual", "licenceCategoryPursued": "A1",
 	})
@@ -112,7 +112,7 @@ func TestSignup_PendingUserCannotBookButCanBrowse(t *testing.T) {
 
 func TestSignups_AdminApprovalQueue(t *testing.T) {
 	f := newSignupFixture(t, "approval")
-	resp, body, _ := f.signupViaFirebase(map[string]any{
+	resp, body, _ := f.signupViaPassword(map[string]any{
 		"schoolId": "school_t", "name": "Pending Pat", "email": "pat@t.com",
 		"transmissionPreference": "manual", "licenceCategoryPursued": "A1",
 	})
@@ -156,7 +156,7 @@ func TestSignups_StudentCannotReachApprovalEndpoints(t *testing.T) {
 
 func TestSignups_Reject(t *testing.T) {
 	f := newSignupFixture(t, "approval")
-	resp, body, tok := f.signupViaFirebase(map[string]any{
+	resp, body, tok := f.signupViaPassword(map[string]any{
 		"schoolId": "school_t", "name": "Reject Me", "email": "rej@t.com",
 		"transmissionPreference": "manual", "licenceCategoryPursued": "A1",
 	})
@@ -175,10 +175,9 @@ func TestSignups_Reject(t *testing.T) {
 		t.Errorf("reject: %d", resp.StatusCode)
 	}
 
-	// Rejected user's token still verifies at Firebase (we don't revoke
-	// refresh tokens — see "1-hour revocation window" note in the auth
-	// architecture). But the middleware's LoadByFirebaseUID returns
-	// ErrAccountDisabled because account_status flipped to 'disabled'.
+	// The rejected user's access token still has a valid signature, but the
+	// middleware re-loads the user and returns ErrAccountDisabled because
+	// account_status flipped to 'disabled'.
 	resp, body = f.do("GET", "/me", nil, tok)
 	if resp.StatusCode != 403 {
 		t.Errorf("expected 403 after reject, got %d body=%s", resp.StatusCode, body)

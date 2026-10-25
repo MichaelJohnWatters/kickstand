@@ -34,7 +34,7 @@ func fillPath(pattern string) string {
 
 func TestAuth_AllProtectedRoutes_RejectMissingToken(t *testing.T) {
 	f := newAPIFixture(t)
-	s := httpapi.NewServer(f.db, nil, f.fb)
+	s := httpapi.NewServer(f.db, nil)
 	for _, r := range s.RouteTable() {
 		if r.Public {
 			continue
@@ -50,7 +50,7 @@ func TestAuth_AllProtectedRoutes_RejectMissingToken(t *testing.T) {
 
 func TestAuth_AllProtectedRoutes_RejectMalformedToken(t *testing.T) {
 	f := newAPIFixture(t)
-	s := httpapi.NewServer(f.db, nil, f.fb)
+	s := httpapi.NewServer(f.db, nil)
 	// Random opaque hex — what the legacy session token used to look
 	// like. The middleware doesn't keep a session-token branch any
 	// more, so this should always 401.
@@ -70,7 +70,7 @@ func TestAuth_AllProtectedRoutes_RejectMalformedToken(t *testing.T) {
 
 func TestAuth_AllProtectedRoutes_RejectForgedJWT(t *testing.T) {
 	f := newAPIFixture(t)
-	s := httpapi.NewServer(f.db, nil, f.fb)
+	s := httpapi.NewServer(f.db, nil)
 	// Three-segment garbage that has JWT shape but no valid signature.
 	// If signature verification regressed, this would slip through.
 	const forged = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJhdHRhY2tlciJ9.bad"
@@ -91,19 +91,11 @@ func TestAuth_AllProtectedRoutes_RejectForgedJWT(t *testing.T) {
 // direction: public routes (listed in routeTable with Public=true)
 // must NOT 401 when no token is sent. Catches accidental wrapping of
 // a public route with authMiddleware.
-//
-// `/auth/firebase-signup` is exempt — it's mounted outside the middleware
-// (the regular middleware would fail with ErrProfileMissing on the first
-// call, since the profile row doesn't exist yet), but the handler still
-// requires a Firebase JWT and verifies it inline.
 func TestAuth_PublicRoutes_DoNotRequireToken(t *testing.T) {
 	f := newAPIFixture(t)
-	s := httpapi.NewServer(f.db, nil, f.fb)
+	s := httpapi.NewServer(f.db, nil)
 	for _, r := range s.RouteTable() {
 		if !r.Public {
-			continue
-		}
-		if r.Pattern == "/auth/firebase-signup" {
 			continue
 		}
 		path := fillPath(r.Pattern)

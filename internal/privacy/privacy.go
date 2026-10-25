@@ -488,7 +488,7 @@ func Anonymise(ctx context.Context, scope *tenant.Scope, userID domain.UserID) e
 		placeholder := fmt.Sprintf("anon-%s@anon.local", string(userID))
 		if _, err := tx.Conn().ExecContext(ctx, `
 			UPDATE users
-			SET email = ?, phone = NULL, name = '(Anonymised)',
+			SET email = ?, phone = NULL, name = '(Anonymised)', password_hash = '',
 			    account_status = 'disabled', anonymised_at = ?
 			WHERE id = ? AND school_id = ?
 		`, placeholder, now, string(userID), string(scope.SchoolID())); err != nil {

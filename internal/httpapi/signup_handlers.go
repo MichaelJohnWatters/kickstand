@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -32,79 +31,6 @@ func (s *Server) handleListSchools(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"schools": out})
-}
-
-// POST /auth/firebase-signup — Phase 3+ flow. The client has already
-// created a Firebase user (Flutter calls createUserWithEmailAndPassword)
-// and is now POSTing the profile body with the resulting ID token in the
-// Authorization header. We:
-//
-//   1. Verify the JWT with the Admin SDK (the regular middleware can't
-//      do this for us — it would fail with ErrProfileMissing because
-//      the users row doesn't exist yet).
-//   2. Use the verified UID to write the local users + student_profiles
-//      row, gating on the school's onboarding_mode.
-//
-// Returns the resulting Identity. No session token — the client's
-// Firebase SDK already has one.
-func (s *Server) handleFirebaseSignup(w http.ResponseWriter, r *http.Request) {
-	if s.Firebase == nil {
-		writeError(w, http.StatusServiceUnavailable, "firebase_disabled",
-			"Firebase Auth is not configured on this server")
-		return
-	}
-	token, ok := bearerToken(r)
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing_token", "Authorization header missing or malformed")
-		return
-	}
-	tok, err := s.Firebase.Auth.VerifyIDToken(r.Context(), token)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "session_invalid", "token verification failed")
-		return
-	}
-
-	var req struct {
-		SchoolID               string `json:"schoolId"`
-		Name                   string `json:"name"`
-		Email                  string `json:"email"`
-		Phone                  string `json:"phone"`
-		TransmissionPreference string `json:"transmissionPreference"`
-		LicenceCategoryPursued string `json:"licenceCategoryPursued"`
-		DateOfBirth            string `json:"dateOfBirth"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_json", err.Error())
-		return
-	}
-	// Dedicated single-tenant instance: ignore whatever school the client
-	// sent and pin every signup to this deployment's one school.
-	if s.SingleTenantSchoolID != "" {
-		req.SchoolID = s.SingleTenantSchoolID
-	}
-	id, err := signup.SignupWithFirebase(r.Context(), s.DB, signup.FirebaseSignupRequest{
-		FirebaseUID:            tok.UID,
-		SchoolID:               domain.SchoolID(req.SchoolID),
-		Name:                   req.Name,
-		Email:                  req.Email,
-		Phone:                  req.Phone,
-		TransmissionPreference: domain.Transmission(req.TransmissionPreference),
-		LicenceCategoryPursued: domain.LicenceCategory(req.LicenceCategoryPursued),
-		DateOfBirth:            req.DateOfBirth,
-	})
-	if err != nil {
-		writeSignupError(w, err)
-		return
-	}
-	// Publish the newly-created identity so the audit middleware can
-	// log this as the user's first action. Public route → authMiddleware
-	// didn't run, so requestState.identity is otherwise nil here.
-	if st := requestStateFrom(r.Context()); st != nil {
-		st.identity = id
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"identity": toIdentityView(*id),
-	})
 }
 
 // ----- Admin: approval queue -----

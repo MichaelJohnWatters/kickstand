@@ -1,14 +1,10 @@
 package httpapi
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
-	firebaseauth "firebase.google.com/go/v4/auth"
-
 	"github.com/michaeljohnwatters/kickstand/internal/audit"
-	"github.com/michaeljohnwatters/kickstand/internal/auth"
 	"github.com/michaeljohnwatters/kickstand/internal/domain"
 	"github.com/michaeljohnwatters/kickstand/internal/privacy"
 	"github.com/michaeljohnwatters/kickstand/internal/tenant"
@@ -76,24 +72,8 @@ func (s *Server) handleAnonymiseUser(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	// Disable the Firebase Auth user — best-effort. If this fails the
-	// SQL scrub already landed, so we still surface 204 to the caller
-	// and the audit row records the action. A retry of the endpoint
-	// will return 409 already_anonymised; the auth disable can be
-	// rerun via the standard Firebase admin tools.
-	if s.Firebase != nil {
-		_ = disableFirebaseUser(r.Context(), s.Firebase, target)
-	}
+	// The SQL scrub already set account_status='disabled' and cleared the
+	// password hash, so the (now placeholder) account can no longer sign in.
 	audit.Describe(r.Context(), "Anonymised user %s under right-to-erasure", string(target))
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// disableFirebaseUser flips the disabled flag on a Firebase Auth
-// record so the (now placeholder) email can't sign in. Looks up the
-// user by their Kickstand user id which is also their Firebase uid
-// (Phase 5 of the auth migration unified them).
-func disableFirebaseUser(ctx context.Context, fb *auth.FirebaseClient, id domain.UserID) error {
-	update := (&firebaseauth.UserToUpdate{}).Disabled(true)
-	_, err := fb.Auth.UpdateUser(ctx, string(id), update)
-	return err
 }

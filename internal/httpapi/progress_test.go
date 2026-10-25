@@ -179,7 +179,7 @@ func TestProgressHTTP_GetStudentProgress_OtherStudentRejected(t *testing.T) {
 	f := newProgressFixture(t)
 	// Sign up a second student via the Firebase flow and try to peek at
 	// the first student's progress.
-	resp, body, sneakyTok := f.signupViaFirebase(map[string]any{
+	resp, body, sneakyTok := f.signupViaPassword(map[string]any{
 		"schoolId": "school_t", "name": "Sneaky", "email": "sneaky@test.com",
 		"transmissionPreference": "manual", "licenceCategoryPursued": "A2",
 	})

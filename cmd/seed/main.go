@@ -19,10 +19,8 @@ import (
 	"strings"
 	"time"
 
-	firebaseauth "firebase.google.com/go/v4/auth"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/michaeljohnwatters/kickstand/internal/auth"
 	"github.com/michaeljohnwatters/kickstand/internal/db"
 	"github.com/michaeljohnwatters/kickstand/internal/domain"
 	"github.com/michaeljohnwatters/kickstand/internal/filestore"
@@ -50,16 +48,6 @@ func run(dsn string) error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 
-	// Mirror the server's Firebase wiring: if env vars are present we
-	// create users in both places (Firebase emulator + local DB) with
-	// the local user_id used as the Firebase UID. If not, only the
-	// local DB rows get written; firebase_uid stays NULL until someone
-	// re-seeds with the emulator running.
-	fb, err := auth.NewFirebaseClient(ctx)
-	if err != nil {
-		return fmt.Errorf("firebase init: %w", err)
-	}
-
 	// Receipt blobs: same logic as the HTTP server — GCS-backed when
 	// the storage env is configured, local-disk fallback otherwise.
 	// Seeding into the wrong store is a UX papercut, not a correctness
@@ -80,21 +68,16 @@ func run(dsn string) error {
 		runner := NewRunner("school_lagan")
 		return runner.ApplyDirect(ctx, d, events)
 	}
-	if err := seedLaganValley(ctx, d, fb, files, applyDirect); err != nil {
+	if err := seedLaganValley(ctx, d, files, applyDirect); err != nil {
 		return fmt.Errorf("seed: %w", err)
 	}
-	suffix := "(local users only)"
-	if fb != nil {
-		suffix = "(also created in Firebase Auth)"
-	}
-	fmt.Println("seeded Lagan Valley Rider Training into", dsn, suffix)
+	fmt.Println("seeded Lagan Valley Rider Training into", dsn, "(sign in as any demo user with password \"password\")")
 	return nil
 }
 
 // seedLaganValley fills the demo tenant. IDs are deterministic strings so
-// re-running is a no-op (INSERT OR IGNORE). When fb is non-nil, each
-// seeded user is also created in Firebase Auth with UID == local user_id.
-// `files` is used to upload synthetic receipt images so the
+// re-running is a no-op (INSERT OR IGNORE). Every demo user's password is
+// "password". `files` is used to upload synthetic receipt images so the
 // reimbursement screens have visible thumbs + clickable receipts.
 //
 // applyEventLog is the hook the seed binary uses to run the event-log
@@ -103,7 +86,6 @@ func run(dsn string) error {
 func seedLaganValley(
 	ctx context.Context,
 	d *sql.DB,
-	fb *auth.FirebaseClient,
 	files filestore.Store,
 	applyEventLog func(events []Event, now time.Time) error,
 ) error {
@@ -284,31 +266,14 @@ func seedLaganValley(
 			method, pattern, entity, targetID, summary, status)
 	}
 
-	// createUser does both halves of seeding a single user: optional
-	// Firebase create (UID pinned to the local user id for re-seed
-	// idempotency) + INSERT INTO users (always). password_hash is left
-	// populated so the legacy auth path still works for tests / dev
-	// without the emulator running.
+	// createUser seeds a single user. Every demo account's password is
+	// "password" (bcrypt-hashed into pwHash) so you can sign in as anyone
+	// via /auth/login during a demo.
 	createUser := func(id, email, name, role, status string) error {
-		if fb != nil {
-			_, err := fb.Auth.CreateUser(ctx, (&firebaseauth.UserToCreate{}).
-				UID(id).
-				Email(email).
-				Password("password").
-				DisplayName(name))
-			// Re-seed lands here; Firebase keeps the user and we keep going.
-			if err != nil && !strings.Contains(err.Error(), "ALREADY_EXISTS") {
-				return fmt.Errorf("firebase create %s: %w", id, err)
-			}
-		}
-		var fbUID any
-		if fb != nil {
-			fbUID = id
-		}
 		return exec(`INSERT OR IGNORE INTO users
-			(id, school_id, email, password_hash, name, role, account_status, created_at, firebase_uid)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			id, schoolID, email, pwHash, name, role, status, createdAt, fbUID)
+			(id, school_id, email, password_hash, name, role, account_status, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, schoolID, email, pwHash, name, role, status, createdAt)
 	}
 
 	steps := []func() error{

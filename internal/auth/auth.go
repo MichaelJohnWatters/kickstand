@@ -1,17 +1,13 @@
-// Package auth holds the Identity type and the Firebase verifier.
+// Package auth owns hand-rolled email/password authentication: bcrypt
+// password hashing (password.go), HS256 access tokens + opaque refresh/reset
+// tokens (tokens.go, refresh.go, reset.go), and the credential + identity
+// store (store.go). Firebase Auth was fully retired on 2026-10-25.
 //
-// The package used to own bcrypt password handling and opaque session
-// tokens; those were deleted on 2026-06-08 once the all-emulator test
-// migration landed and the server stopped issuing or accepting opaque
-// tokens. Firebase Auth is now the only identity source.
-//
-// What remains:
+// What this file holds:
 //   - Identity — the shape every handler reads after the middleware
 //     resolves a Bearer token.
 //   - The shared error sentinels mapped to HTTP codes by the engine
 //     error helper.
-//   - The Firebase verifier (firebase.go), used by the middleware and
-//     by the firebase-signup HTTP handler.
 package auth
 
 import (
@@ -22,12 +18,8 @@ import (
 
 // Identity is what HTTP middleware extracts from a request after
 // verifying the Bearer token. Construct tenant.NewScope(db, id.SchoolID)
-// to start making tenant-scoped queries.
-//
-// FirebaseUID is populated by the Firebase verifier. Handlers shouldn't
-// read it directly — UserID is the local primary key that every other
-// table references. FirebaseUID is here for the signup handler, which
-// needs to write it back into the users row on profile creation.
+// to start making tenant-scoped queries. UserID is the local primary key
+// that every other table references.
 type Identity struct {
 	UserID        domain.UserID
 	SchoolID      domain.SchoolID
@@ -35,7 +27,6 @@ type Identity struct {
 	AccountStatus domain.AccountStatus
 	Email         string
 	Name          string
-	FirebaseUID   string
 }
 
 var (

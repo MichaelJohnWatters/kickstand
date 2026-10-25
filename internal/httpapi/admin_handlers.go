@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	firebaseauth "firebase.google.com/go/v4/auth"
-
 	"github.com/michaeljohnwatters/kickstand/internal/admin"
 	"github.com/michaeljohnwatters/kickstand/internal/audit"
 	"github.com/michaeljohnwatters/kickstand/internal/auth"
@@ -20,6 +18,25 @@ import (
 )
 
 // Helpers ------------------------------------------------------------------
+
+// hashNewPassword bcrypt-hashes an admin-supplied initial password, writing a
+// 400 and returning ok=false if it's too short/long. Shared by the invite
+// instructor + create student handlers.
+func hashNewPassword(w http.ResponseWriter, plain string) (string, bool) {
+	hash, err := auth.HashPassword(plain)
+	switch {
+	case errors.Is(err, auth.ErrPasswordTooShort):
+		writeError(w, http.StatusBadRequest, "password_too_short", "Password must be at least 8 characters")
+		return "", false
+	case errors.Is(err, auth.ErrPasswordTooLong):
+		writeError(w, http.StatusBadRequest, "password_too_long", "Password is too long")
+		return "", false
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "internal_error", "could not set password")
+		return "", false
+	}
+	return hash, true
+}
 
 func requireAdminOwner(w http.ResponseWriter, id *auth.Identity) bool {
 	if id.Role != domain.RoleAdmin && id.Role != domain.RoleOwner {
@@ -733,11 +750,6 @@ func (s *Server) handleInviteInstructor(w http.ResponseWriter, r *http.Request) 
 	if !requireAdminOwner(w, id) {
 		return
 	}
-	if s.Firebase == nil {
-		writeError(w, http.StatusServiceUnavailable, "firebase_disabled",
-			"Firebase Auth is not configured on this server")
-		return
-	}
 	scope := tenant.NewScope(s.DB, id.SchoolID)
 	var req struct {
 		Name           string `json:"name"`
@@ -754,33 +766,13 @@ func (s *Server) handleInviteInstructor(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "bad_json", err.Error())
 		return
 	}
-	if len(req.Password) < 6 {
-		// Firebase enforces ≥6; we surface a 400 early to avoid the
-		// Firebase create call when we know it'll fail.
-		writeError(w, http.StatusBadRequest, "invalid_input",
-			"password must be at least 6 characters")
+	hash, ok := hashNewPassword(w, req.Password)
+	if !ok {
 		return
 	}
 
-	// Pin the Firebase UID to the local user_id so the firebase_uid
-	// column doubles as the join key.
 	userID := domain.UserID(domain.NewID())
 	email := strings.ToLower(strings.TrimSpace(req.Email))
-	fbUser, err := s.Firebase.Auth.CreateUser(r.Context(), (&firebaseauth.UserToCreate{}).
-		UID(string(userID)).
-		Email(email).
-		Password(req.Password).
-		DisplayName(req.Name))
-	if err != nil {
-		// Most common failure: email already exists in Firebase. Surface
-		// as 409 so the admin sees a clean message.
-		if firebaseauth.IsEmailAlreadyExists(err) || firebaseauth.IsUIDAlreadyExists(err) {
-			writeError(w, http.StatusConflict, "email_in_use", "email already in use")
-			return
-		}
-		writeError(w, http.StatusBadGateway, "firebase_error", "could not create auth identity")
-		return
-	}
 
 	accs := make([]admin.Accreditation, 0, len(req.Accreditations))
 	for _, a := range req.Accreditations {
@@ -794,7 +786,7 @@ func (s *Server) handleInviteInstructor(w http.ResponseWriter, r *http.Request) 
 	}
 	i, err := admin.InviteInstructor(r.Context(), scope, admin.InviteInstructorRequest{
 		UserID:         userID,
-		FirebaseUID:    fbUser.UID,
+		PasswordHash:   hash,
 		Name:           req.Name,
 		Email:          email,
 		Phone:          req.Phone,
@@ -802,8 +794,6 @@ func (s *Server) handleInviteInstructor(w http.ResponseWriter, r *http.Request) 
 		Accreditations: accs,
 	})
 	if err != nil {
-		// Roll back the Firebase user so the email stays available.
-		_ = s.Firebase.Auth.DeleteUser(r.Context(), fbUser.UID)
 		writeAdminError(w, err)
 		return
 	}
@@ -812,17 +802,11 @@ func (s *Server) handleInviteInstructor(w http.ResponseWriter, r *http.Request) 
 }
 
 // POST /students — admin/owner manually adds a student (the alternative
-// to self-signup). Mirrors handleInviteInstructor: create the Firebase
-// identity first, write the local rows, and roll back the Firebase user
-// if the local write fails so the email stays available for retry.
+// to self-signup). Mirrors handleInviteInstructor: hash the admin-supplied
+// password and write the local rows. A duplicate email surfaces as 409.
 func (s *Server) handleCreateStudent(w http.ResponseWriter, r *http.Request) {
 	id, _ := identityFromContext(r.Context())
 	if !requireAdminOwner(w, id) {
-		return
-	}
-	if s.Firebase == nil {
-		writeError(w, http.StatusServiceUnavailable, "firebase_disabled",
-			"Firebase Auth is not configured on this server")
 		return
 	}
 	scope := tenant.NewScope(s.DB, id.SchoolID)
@@ -836,37 +820,22 @@ func (s *Server) handleCreateStudent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_json", err.Error())
 		return
 	}
-	if len(req.Password) < 6 {
-		writeError(w, http.StatusBadRequest, "invalid_input",
-			"password must be at least 6 characters")
+	hash, ok := hashNewPassword(w, req.Password)
+	if !ok {
 		return
 	}
 
 	userID := domain.UserID(domain.NewID())
 	email := strings.ToLower(strings.TrimSpace(req.Email))
-	fbUser, err := s.Firebase.Auth.CreateUser(r.Context(), (&firebaseauth.UserToCreate{}).
-		UID(string(userID)).
-		Email(email).
-		Password(req.Password).
-		DisplayName(req.Name))
-	if err != nil {
-		if firebaseauth.IsEmailAlreadyExists(err) || firebaseauth.IsUIDAlreadyExists(err) {
-			writeError(w, http.StatusConflict, "email_in_use", "email already in use")
-			return
-		}
-		writeError(w, http.StatusBadGateway, "firebase_error", "could not create auth identity")
-		return
-	}
 
 	st, err := admin.CreateStudent(r.Context(), scope, admin.CreateStudentRequest{
-		UserID:      userID,
-		FirebaseUID: fbUser.UID,
-		Name:        req.Name,
-		Email:       email,
-		Phone:       req.Phone,
+		UserID:       userID,
+		PasswordHash: hash,
+		Name:         req.Name,
+		Email:        email,
+		Phone:        req.Phone,
 	})
 	if err != nil {
-		_ = s.Firebase.Auth.DeleteUser(r.Context(), fbUser.UID)
 		writeAdminError(w, err)
 		return
 	}

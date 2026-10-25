@@ -52,12 +52,12 @@ func requestStateFrom(ctx context.Context) *requestState {
 // then build a tenant.Scope from id.SchoolID — never from request
 // headers.
 //
-// Server construction requires a non-nil Firebase client (see
-// NewServer); if you somehow get here without one, every request 503s
-// rather than silently letting anything through.
+// Server construction requires a non-nil token service (see NewServer);
+// if you somehow get here without one, every request 503s rather than
+// silently letting anything through.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.Tokens == nil && s.Firebase == nil {
+		if s.Tokens == nil {
 			writeError(w, http.StatusServiceUnavailable, "auth_not_configured",
 				"authentication is not configured on this server")
 			return
@@ -81,21 +81,15 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// resolveIdentity verifies a bearer token and loads the local identity. It
-// accepts our own hand-rolled access token (preferred, cheap + local) and,
-// during the Firebase→hand-rolled migration, falls back to a Firebase ID
-// token. Either way the authoritative role/status come from the DB, never from
-// the token.
+// resolveIdentity verifies our hand-rolled access token and loads the local
+// identity. The authoritative role/status come from the DB, never from the
+// token, so a disabled or role-changed account takes effect immediately.
 func (s *Server) resolveIdentity(ctx context.Context, token string) (*auth.Identity, error) {
-	if s.Tokens != nil {
-		if uid, err := s.Tokens.VerifyAccess(token); err == nil {
-			return auth.LoadByUserID(ctx, s.DB, uid)
-		}
+	uid, err := s.Tokens.VerifyAccess(token)
+	if err != nil {
+		return nil, auth.ErrSessionInvalid
 	}
-	if s.Firebase != nil {
-		return s.Firebase.VerifyAndLoad(ctx, s.DB, token)
-	}
-	return nil, auth.ErrSessionInvalid
+	return auth.LoadByUserID(ctx, s.DB, uid)
 }
 
 func bearerToken(r *http.Request) (string, bool) {
