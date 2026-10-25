@@ -199,7 +199,10 @@ func main() {
 	// Email worker: drains the notification outbox via the configured sender.
 	// SMTP_HOST → real SMTP; else EMAIL_LOG=1 → log-only (dev); else email
 	// stays queued but unsent (no worker), so bookings still succeed.
-	if sender := buildEmailSender(log); sender != nil && *emailInterval > 0 {
+	sender := buildEmailSender(log)
+	srv.EmailSender = sender                    // used for password-reset emails too
+	srv.ResetURLBase = os.Getenv("WEB_APP_URL") // e.g. https://app.example/reset-password
+	if sender != nil && *emailInterval > 0 {
 		go runEmailWorker(rootCtx, d, sender, *emailInterval)
 	} else {
 		log.Info("email: disabled (no SMTP_HOST / EMAIL_LOG) — notifications queue but aren't emailed")

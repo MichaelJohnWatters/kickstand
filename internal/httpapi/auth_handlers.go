@@ -1,15 +1,30 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/michaeljohnwatters/kickstand/internal/auth"
 	"github.com/michaeljohnwatters/kickstand/internal/domain"
+	"github.com/michaeljohnwatters/kickstand/internal/email"
 	"github.com/michaeljohnwatters/kickstand/internal/signup"
 )
+
+// firstName returns the greeting name ("there" if blank).
+func firstName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "there"
+	}
+	if i := strings.IndexByte(name, ' '); i > 0 {
+		return name[:i]
+	}
+	return name
+}
 
 // accessTTL is how long a hand-rolled access token is valid. Longer than ideal
 // until a refresh endpoint lands (Phase 1c); revocation still works because the
@@ -161,4 +176,97 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		"token":    token,
 		"identity": toIdentityView(*id),
 	})
+}
+
+// handlePasswordResetRequest — POST /auth/password-reset/request (public).
+// Emails a reset link if the address has an account. ALWAYS returns 204 (even
+// for unknown emails) so it can't be used to discover who has an account.
+func (s *Server) handlePasswordResetRequest(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SchoolID string `json:"schoolId"`
+		Email    string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_json", "request body must be valid JSON")
+		return
+	}
+	schoolID := req.SchoolID
+	if s.SingleTenantSchoolID != "" {
+		schoolID = s.SingleTenantSchoolID
+	}
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+
+	// Look up the user; on any miss we still return 204 (no enumeration).
+	var userID, name string
+	err := s.DB.QueryRowContext(r.Context(),
+		`SELECT id, name FROM users WHERE school_id = ? AND email = ? AND account_status != 'disabled'`,
+		schoolID, email).Scan(&userID, &name)
+	if err == nil {
+		if token, terr := auth.CreateResetToken(r.Context(), s.DB, domain.SchoolID(schoolID), domain.UserID(userID), time.Now()); terr == nil {
+			s.sendResetEmail(email, name, token)
+		} else {
+			writeInternal(w, r, "reset_request_failed", terr)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// sendResetEmail delivers the reset link best-effort (async so the response —
+// and its timing — is the same whether or not the account exists).
+func (s *Server) sendResetEmail(addr, name, token string) {
+	if s.EmailSender == nil {
+		return
+	}
+	link := token
+	if s.ResetURLBase != "" {
+		link = s.ResetURLBase + "?token=" + token
+	}
+	body := "Hi " + firstName(name) + ",\n\n" +
+		"We received a request to reset your password. Use this link (valid for 1 hour):\n\n" +
+		link + "\n\nIf you didn't request this, you can ignore this email."
+	sender := s.EmailSender
+	go func() {
+		_ = sender.Send(context.Background(), email.Message{To: addr, ToName: name, Subject: "Reset your password", Body: body})
+	}()
+}
+
+// handlePasswordResetConfirm — POST /auth/password-reset/confirm (public).
+// Validates the reset token and sets the new password (single-use).
+func (s *Server) handlePasswordResetConfirm(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Token       string `json:"token"`
+		NewPassword string `json:"newPassword"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_json", "request body must be valid JSON")
+		return
+	}
+	hash, err := auth.HashPassword(req.NewPassword)
+	switch {
+	case errors.Is(err, auth.ErrPasswordTooShort):
+		writeError(w, http.StatusBadRequest, "password_too_short", "Password must be at least 8 characters")
+		return
+	case errors.Is(err, auth.ErrPasswordTooLong):
+		writeError(w, http.StatusBadRequest, "password_too_long", "Password is too long")
+		return
+	case err != nil:
+		writeInternal(w, r, "reset_failed", err)
+		return
+	}
+
+	userID, _, err := auth.ConsumeResetToken(r.Context(), s.DB, req.Token, time.Now())
+	if errors.Is(err, auth.ErrSessionInvalid) {
+		writeError(w, http.StatusBadRequest, "invalid_token", "This reset link is invalid or has expired")
+		return
+	}
+	if err != nil {
+		writeInternal(w, r, "reset_failed", err)
+		return
+	}
+	if err := auth.SetPassword(r.Context(), s.DB, userID, hash); err != nil {
+		writeInternal(w, r, "reset_failed", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

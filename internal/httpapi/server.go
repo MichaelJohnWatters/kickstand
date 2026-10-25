@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/michaeljohnwatters/kickstand/internal/auth"
+	"github.com/michaeljohnwatters/kickstand/internal/email"
 	"github.com/michaeljohnwatters/kickstand/internal/filestore"
 )
 
@@ -43,6 +44,13 @@ type Server struct {
 	// issues them. During the Firebase→hand-rolled migration both paths run;
 	// Firebase is the fallback. Set from JWT_SIGNING_KEY in main.go.
 	Tokens *auth.TokenService
+	// EmailSender delivers password-reset emails (nil = can't send; the
+	// request endpoint still returns 200 to avoid leaking who has an account).
+	EmailSender email.Sender
+	// ResetURLBase is the web page that handles a reset link, e.g.
+	// https://app.example/reset-password — the token is appended as ?token=.
+	// Empty → the email carries the raw token with instructions.
+	ResetURLBase string
 
 	// MaxBodyBytes caps every request body (see withMaxBytes). Zero means
 	// use defaultMaxBodyBytes; a negative value disables the cap.
@@ -104,6 +112,8 @@ func (s *Server) routeTable() []routeSpec {
 		{"POST", "/auth/firebase-signup", true, s.handleFirebaseSignup},
 		{"POST", "/auth/login", true, s.handleLogin},
 		{"POST", "/auth/signup", true, s.handleSignup},
+		{"POST", "/auth/password-reset/request", true, s.handlePasswordResetRequest},
+		{"POST", "/auth/password-reset/confirm", true, s.handlePasswordResetConfirm},
 		{"GET", "/schools", true, s.handleListSchools},
 		{"GET", "/healthz", true, healthCheck},
 		{"GET", "/readyz", true, s.handleReadyz},
