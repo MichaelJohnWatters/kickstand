@@ -2,15 +2,18 @@
 # Dump every endpoint the demo build needs into app/assets/demo/*.json.
 #
 # Prerequisites:
-#   1. `make emulator`     — Firebase Auth + Storage emulators running.
-#   2. `make backend`      — fresh seed + Go server on :8765.
+#   1. `make backend`      — fresh seed + Go server on :8765.
 #
 # What it does:
-#   - Mints an Owner ID token (owen@lagan.test → user_owen).
-#   - Mints an Instructor token (user_instr — Dave).
-#   - Mints a Student token (user_stu — Alex).
+#   - Mints an Owner access token (user_owen).
+#   - Mints an Instructor token (user_instr_dave — Dave).
+#   - Mints a Student token (user_student_alex — Alex).
 #   - GETs every list-style endpoint with the relevant token, writes
 #     the response body verbatim to app/assets/demo/<name>.json.
+#
+# Tokens are hand-rolled HS256 JWTs signed with the same JWT_SIGNING_KEY
+# the backend runs with (mintdemotoken reads it from the env). The default
+# below matches `make run` / `make backend`.
 #
 # MockApiClient on the Flutter side loads these assets at startup —
 # they're the exact same JSON shapes ApiClient.fromJson already knows
@@ -22,8 +25,9 @@ API="${KS_API:-http://localhost:8765}"
 OUT="${KS_DEMO_OUT:-app/assets/demo}"
 mkdir -p "$OUT"
 
-export FIREBASE_AUTH_EMULATOR_HOST="${FIREBASE_AUTH_EMULATOR_HOST:-localhost:19099}"
-export FIREBASE_PROJECT_ID="${FIREBASE_PROJECT_ID:-kickstand-dev}"
+# Must match the key the running server verifies against (see Makefile
+# DEV_JWT_SIGNING_KEY used by `make run` / `make backend`).
+export JWT_SIGNING_KEY="${JWT_SIGNING_KEY:-dev-insecure-signing-key-change-me-0123456789}"
 
 # Sanity check the backend's up.
 if ! curl -fsS "$API/health" > /dev/null; then
@@ -31,7 +35,7 @@ if ! curl -fsS "$API/health" > /dev/null; then
   exit 1
 fi
 
-echo "Minting demo tokens via the Auth emulator..."
+echo "Minting demo tokens..."
 go build -o bin/mintdemotoken ./cmd/mintdemotoken
 OWEN_TOKEN=$(./bin/mintdemotoken -uid user_owen)
 DAVE_TOKEN=$(./bin/mintdemotoken -uid user_instr_dave)

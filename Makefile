@@ -1,4 +1,8 @@
-.PHONY: build test test-noemu run seed seed-firebase backend demo-data web-demo marketing-demo clean tidy app-deps app-analyze app-web app-run emulator run-firebase backup firebase-smoke
+.PHONY: build test run seed backend demo-data web-demo marketing-demo clean tidy app-deps app-analyze app-web app-run backup
+
+# Dev-only HS256 signing key for local auth. NEVER use in production — prod
+# sets its own JWT_SIGNING_KEY (≥32 random bytes, e.g. `openssl rand -base64 48`).
+DEV_JWT_SIGNING_KEY ?= dev-insecure-signing-key-change-me-0123456789
 
 build:
 	go build -o bin/server ./cmd/server
@@ -13,81 +17,35 @@ build:
 backup:
 	go run ./cmd/backup -dsn kickstand.db
 
-# Smoke-test a REAL Firebase config (not the emulator). Requires
-# FIREBASE_PROJECT_ID + GOOGLE_APPLICATION_CREDENTIALS. See deploy/firebase-setup.md.
-firebase-smoke:
-	./scripts/firebase-smoke.sh
-
-# Full test suite — every httpapi test goes through the Firebase Auth
-# emulator (Phase 1 of firebase-auth-migration.md). Receipt round-trip
-# tests in internal/filestore additionally go through the Storage
-# emulator when STORAGE_EMULATOR_HOST is set. Both tests t.Skip()
-# themselves when the env isn't there, so plain `go test` is still a
-# clean "ok" with most things exercised.
+# Full test suite — auth is hand-rolled (no emulator), so this is just a
+# plain run. The internal/filestore receipt tests exercise GCS only when
+# STORAGE_EMULATOR_HOST points at a storage emulator; otherwise they
+# t.Skip(), so `go test ./...` is a clean "ok" with most things exercised.
 test:
-	FIREBASE_AUTH_EMULATOR_HOST=localhost:19099 \
-	FIREBASE_PROJECT_ID=kickstand-dev \
-	STORAGE_EMULATOR_HOST=localhost:19199 \
-	FIREBASE_STORAGE_BUCKET=kickstand-dev.appspot.com \
 	go test ./...
 
-# Run only the tests that don't need the emulator (everything outside
-# internal/httpapi).
-test-noemu:
-	go test ./...
-
+# Dev server with local email/password auth enabled. EMAIL_LOG=1 prints
+# password-reset links to the log instead of sending real mail.
 run: build
-	./bin/server
+	JWT_SIGNING_KEY=$(DEV_JWT_SIGNING_KEY) EMAIL_LOG=1 ./bin/server
 
 seed: build
 	./bin/seed
 
-# Seed targeting the Firebase Auth emulator so each demo user is
-# created in Firebase too (login via Flutter requires the user to
-# exist on the Firebase side). Match the env to `make run-firebase`
-# / `make emulator`. Re-running is idempotent — Firebase
-# CreateUser ALREADY_EXISTS errors are swallowed by the seeder.
-#
-# If you previously ran plain `make seed` against the same DB, the
-# local rows exist with NULL firebase_uid and INSERT OR IGNORE will
-# skip them. `make clean && make seed-firebase` is the reliable
-# reset.
-seed-firebase: build
-	FIREBASE_AUTH_EMULATOR_HOST=localhost:19099 \
-	FIREBASE_PROJECT_ID=kickstand-dev \
-	STORAGE_EMULATOR_HOST=localhost:19199 \
-	FIREBASE_STORAGE_BUCKET=kickstand-dev.appspot.com \
-	./bin/seed
-
 # Dump the running backend's JSON responses into app/assets/demo/
 # for the static demo-mode Flutter build. Requires `make backend`
-# already running in another tab (emulators + Go server). Uses the
-# same JSON shapes the real ApiClient parses — single source of truth,
-# no duplicated payload-shaping logic.
+# already running in another tab. Uses the same JSON shapes the real
+# ApiClient parses — single source of truth, no duplicated payload-shaping.
 demo-data:
 	./scripts/dump-demo.sh
 
-# One-shot backend reset + start:
-#   1. Wipe the local SQLite DB.
-#   2. Wipe every user in the Firebase Auth emulator + every blob in
-#      the Storage emulator (REST DELETE on the emulator-specific
-#      endpoints; silent if the emulators aren't running).
-#   3. Re-seed against the emulators (new SQLite rows + matching
-#      Firebase users).
-#   4. Start the Go server.
-#
-# Assumes `make emulator` is already running in another tab. Use
-# this any time login starts misbehaving for a known-good seeded
-# user, or after schema changes.
+# One-shot backend reset + start: wipe the local SQLite DB, re-seed the
+# demo tenant, then run the server with the dev signing key. Use any time
+# login starts misbehaving for a known-good seeded user, or after schema
+# changes. Every demo user's password is "password".
 backend: clean
-	@echo "wiping Firebase Auth emulator users..."
-	@curl -sf -X DELETE "http://localhost:19099/emulator/v1/projects/kickstand-dev/accounts" > /dev/null || \
-		echo "  (Auth emulator not reachable — skipping)"
-	@echo "wiping Firebase Storage emulator bucket..."
-	@curl -sf -X DELETE "http://localhost:19199/storage/v1/b/kickstand-dev.appspot.com/o" > /dev/null || \
-		echo "  (Storage emulator not reachable — skipping)"
-	$(MAKE) seed-firebase
-	$(MAKE) run-firebase
+	$(MAKE) seed
+	$(MAKE) run
 
 tidy:
 	go mod tidy
@@ -150,28 +108,3 @@ marketing-demo: demo-data web-demo
 DEVICE ?= chrome
 app-run:
 	cd app && flutter run -d $(DEVICE)
-
-# ----- Firebase emulator -----
-# Local Auth (19099) + Storage (19199) + UI (14000) + Hub (14400)
-# + Logging (14500). Non-default ports in the 14000/19000 range so
-# they coexist with any other Firebase project on this dev machine
-# (Firebase's defaults are 9099/9199/4000/4400/4500). Needs Node ≥20 and
-# Java ≥11. Project alias 'kickstand-dev' (see .firebaserc); zero Google
-# account required for the emulator itself.
-#
-# Typical dev loop:
-#   tab 1:  make emulator       # Firebase Auth + Storage + UI
-#   tab 2:  make run-firebase   # Go server pointing at the emulator
-#   tab 3:  make app-run        # Flutter, talks to both
-emulator:
-	firebase emulators:start --only auth,storage,ui --project kickstand-dev
-
-# Run the Go server with Firebase-JWT verification + Firebase Storage
-# enabled, pointing at the local emulator suite. Use in tandem with
-# `make emulator` in another tab.
-run-firebase: build
-	FIREBASE_AUTH_EMULATOR_HOST=localhost:19099 \
-	FIREBASE_PROJECT_ID=kickstand-dev \
-	STORAGE_EMULATOR_HOST=localhost:19199 \
-	FIREBASE_STORAGE_BUCKET=kickstand-dev.appspot.com \
-	./bin/server

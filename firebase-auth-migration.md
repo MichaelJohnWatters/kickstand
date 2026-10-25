@@ -1,5 +1,15 @@
 # Firebase Auth migration — implementation plan
 
+> **SUPERSEDED — Firebase retired 2026-10-25.** We moved OFF Firebase Auth
+> entirely to drop the US/Google dependency for a GDPR/EU-sovereignty-leaning
+> deployment. Auth is now hand-rolled (bcrypt + HS256 JWT access tokens +
+> rotating refresh tokens + emailed single-use password reset); the one secret
+> is `JWT_SIGNING_KEY`. The server side is complete — no Firebase client, no
+> emulator, the whole httpapi suite runs under plain `go test`. The only
+> remaining phase is swapping the **Flutter client** (firebase_auth → the API).
+> Everything below documents the (now-reverted) migration *into* Firebase and
+> is kept for history only.
+
 **Status: Phases 0–5 + 1b + 1-full landed 2026-06-08.** Phase 6 (cloud
 deploy + GCS receipts) is the only item left. The all-emulator test
 migration is done: every httpapi test mints real Firebase ID tokens

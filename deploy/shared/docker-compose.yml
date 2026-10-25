@@ -10,8 +10,7 @@
 # FILL-IN: point YOGA_IMAGE at its image and YOGA_UPSTREAM at its host:port —
 # its build/source lives in its own project.
 #
-#   cp .env.example .env     # edit both domains + each app's env
-#   mkdir -p ../secrets      # firebase-sa.json here (shared with single-app compose)
+#   cp .env.example .env     # edit both domains + each app's env (set JWT_SIGNING_KEY!)
 #   docker compose up -d --build
 
 services:
@@ -22,9 +21,8 @@ services:
     restart: unless-stopped
     environment:
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
-      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}
-      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
-      - FIREBASE_STORAGE_BUCKET=${FIREBASE_STORAGE_BUCKET:-}
+      - JWT_SIGNING_KEY=${JWT_SIGNING_KEY:-}
+      - WEB_APP_URL=${WEB_APP_URL:-}
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_USERNAME=${SMTP_USERNAME:-}
@@ -36,7 +34,6 @@ services:
       - KS_SINGLE_TENANT_SCHOOL_ID=${KS_SINGLE_TENANT_SCHOOL_ID:-}
     volumes:
       - kickstand-data:/data
-      - ../secrets:/secrets:ro        # reuses deploy/secrets (gitignored)
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8765/healthz"]
       interval: 30s

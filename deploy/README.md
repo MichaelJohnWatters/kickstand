@@ -20,26 +20,25 @@ database serves every training school, isolated by `school_id` (the
 not a new server.
 
 A customer who wants their **own dedicated instance** gets the *same* image
-deployed in isolation: its own volume (DB), its own domain, optionally its
-own Firebase project, and `KS_SINGLE_TENANT_SCHOOL_ID` set to pin every
-signup to its one school. No code fork — just configuration.
+deployed in isolation: its own volume (DB), its own domain, and
+`KS_SINGLE_TENANT_SCHOOL_ID` set to pin every signup to its one school. No
+code fork — just configuration.
 
 ## Prerequisites
 
 - A Docker host with ports 80/443 open and a domain pointed at it.
-- A Firebase project for Auth. Download a service-account JSON (Firebase
-  console → Project settings → Service accounts → Generate new private key).
+- An HS256 signing secret for auth. Generate one with
+  `openssl rand -base64 48` and put it in `.env` as `JWT_SIGNING_KEY`.
+- (Optional) an SMTP relay for password-reset / notification email.
 
 ## First deploy (shared multi-tenant)
 
 ```bash
 cd deploy
-cp .env.example .env            # edit: KS_DOMAIN, CORS_ALLOWED_ORIGINS, FIREBASE_PROJECT_ID
-mkdir -p secrets                # gitignored
-cp /path/to/firebase-sa.json secrets/firebase-sa.json   # matches GOOGLE_APPLICATION_CREDENTIALS
+cp .env.example .env            # edit: KS_DOMAIN, CORS_ALLOWED_ORIGINS, JWT_SIGNING_KEY
 
 docker compose up -d --build
-docker compose logs -f app      # look for "auth: firebase enabled" + "tenancy: shared multi-tenant"
+docker compose logs -f app      # look for "auth: password login enabled" + "tenancy: shared multi-tenant"
 ```
 
 Caddy obtains a Let's Encrypt cert for `KS_DOMAIN` automatically. The API is
@@ -58,14 +57,14 @@ docker compose run --rm --entrypoint provision app \
   -owner-password 'change-me-immediately'
 ```
 
-It creates the school + its owner account **and** the owner's Firebase user
-(against `FIREBASE_PROJECT_ID`). The owner signs in with that email/password.
-Region `NI`→DVA, `GB`→DVSA. Repeat per school for a shared deployment.
+It creates the school + its owner account with the bcrypt-hashed
+`-owner-password`. The owner signs in with that email/password and can change
+it later. Region `NI`→DVA, `GB`→DVSA. Repeat per school for a shared deployment.
 
 ## Dedicated single-tenant instance
 
-Stand up a separate deployment (own host/volume/domain, ideally the customer's
-own Firebase project), provision its one school, then pin to it:
+Stand up a separate deployment (own host/volume/domain), provision its one
+school, then pin to it:
 
 ```bash
 # 1. provision prints the school id — copy it:
@@ -86,8 +85,8 @@ advertises only it, and the client needs no school picker. Boot logs
 ## The web app
 
 The Flutter web build (`make app-web`, output `app/build/web/`) is a static
-bundle — host it on any static host (Cloudflare Pages, Firebase Hosting) or
-serve it from Caddy with a `file_server`. **Its origin must be listed in
+bundle — host it on any static host (Cloudflare Pages, Netlify) or serve it
+from Caddy with a `file_server`. **Its origin must be listed in
 `CORS_ALLOWED_ORIGINS`** or the browser will block API calls.
 
 ## Data & backups
@@ -117,8 +116,8 @@ docker compose run --rm --entrypoint sh app -c \
 docker compose start app
 ```
 
-Firebase Storage (set `FIREBASE_STORAGE_BUCKET`) moves receipt images off the
-volume to GCS, leaving only the DB to back up.
+Receipt images live on the same `/data` volume as the DB, so the volume is the
+whole backup surface.
 
 ## Config reference
 
@@ -127,11 +126,16 @@ See `.env.example`. Server flags (overridable in `docker-compose.yml`'s
 `-signup-rate-per-min`, `-signup-burst`, `-reminders-interval`,
 `-email-interval`, `-log-level`.
 
+**Auth:** `JWT_SIGNING_KEY` (≥32 bytes) is required in production — it signs
+the HS256 access + refresh tokens. The boot-gate refuses to start without it
+when `APP_ENV=production`. `WEB_APP_URL` is the base of the emailed
+password-reset link.
+
 **Email:** set `SMTP_HOST` (+ `SMTP_PORT`/`USERNAME`/`PASSWORD`, `EMAIL_FROM`)
-to send booking confirmations, reminders, and cancellations via any SMTP relay.
-Without it, email notifications queue but aren't sent (in-app still works);
-`EMAIL_LOG=1` logs them for dev. The worker drains the outbox every
-`-email-interval`.
+to send booking confirmations, reminders, cancellations, and password-reset
+links via any SMTP relay. Without it, email queues but isn't sent (in-app
+still works; password reset returns 204 but no link goes out); `EMAIL_LOG=1`
+logs them for dev. The worker drains the outbox every `-email-interval`.
 
 **Health & monitoring:** `GET /healthz` is liveness (process up); `GET /readyz`
 is readiness (DB reachable — point uptime checks / load balancers here);

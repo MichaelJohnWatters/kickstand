@@ -17,8 +17,8 @@ use the single-app compose one level up in `deploy/`.)
 ## What's wired vs. what you fill in
 
 - **kickstand** is concrete — built from this repo's `Dockerfile`, same env as
-  the single-app deploy (CORS, Firebase, email, tenancy). See `../README.md`
-  and `../firebase-setup.md`.
+  the single-app deploy (CORS, `JWT_SIGNING_KEY`, email, tenancy). See
+  `../README.md`.
 - **yoga-school** is a template. Its source lives in its own project, so the
   compose references a prebuilt image rather than building it here. You set:
   - `YOGA_IMAGE` — the image to run (build/push it from its own repo, or a
@@ -77,8 +77,7 @@ from step 5.
 
 ```bash
 cd ~/apps/kickstand/deploy/shared
-cp .env.example .env          # set both domains + each app's env + YOGA_IMAGE=yoga-school:latest
-mkdir -p ../secrets           # drop firebase-sa.json here (shared with ../; gitignored)
+cp .env.example .env          # set both domains + each app's env + JWT_SIGNING_KEY + YOGA_IMAGE
 docker compose up -d --build
 docker compose logs -f caddy  # watch both certs get issued
 ```

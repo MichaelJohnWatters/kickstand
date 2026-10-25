@@ -25,9 +25,9 @@ Last updated: 2026-10-12 (security hardening + logic-review follow-ups)
 >   dimensions via `DecodeConfig` (MaxPixels = 50 MP) before decoding, so a
 >   tiny file declaring enormous dimensions is rejected (413) rather than
 >   OOM-ing on decode.
-> - **Signup rate limit** — per-IP token-bucket on `POST /auth/firebase-signup`
+> - **Signup rate limit** — per-IP token-bucket on the public `/auth/*` routes
 >   (`-signup-rate-per-min`, `-signup-burst`; defaults 10/min, burst 5).
->   Defence-in-depth over Firebase's own throttle; off in tests by default.
+>   Caps login/signup/reset flooding; off in tests by default.
 >
 > A logic review (2026-10-12) verified the booking/disruption/ledger/seed/
 > reminders engines against these docs: **no behavioural bugs found**. It added
@@ -339,26 +339,22 @@ make run              # Go server on :8765 (with reminders worker)
 make app-run          # Flutter in Chrome (defaults to KS_API_BASE_URL=http://localhost:8765)
 ```
 
-Firebase Auth is live (Phases 0–5 + 1b + the all-emulator test
-migration landed 2026-06-08). Local dev and tests both go through the
-emulator — the Go backend takes
-`FIREBASE_AUTH_EMULATOR_HOST=localhost:9099`, the Flutter client uses
-`useAuthEmulator` in debug builds, and every httpapi test mints real
-Firebase ID tokens via the Auth Emulator. The legacy session-token
-validation path, `/auth/login`, `/auth/logout`, `/auth/signup`,
-`internal/auth.Login`/`Authenticate`/`Logout`/`HashPassword` and the
-bcrypt module are all deleted. The `user_sessions` table and
-`password_hash` column survive only as vestigial NOT NULL columns
-until a follow-up migration drops them. Storage emulator is
-scaffolded but dormant until Phase 6.
+Auth is hand-rolled email/password (Firebase fully retired 2026-10-25).
+The server bcrypt-hashes passwords and issues HS256 JWT access tokens
+(`/auth/login`, `/auth/signup`) plus rotating refresh tokens
+(`/auth/refresh`); password reset is an emailed single-use token
+(`/auth/password-reset/request` + `/confirm`). The middleware verifies our
+own tokens and re-loads role/status from the DB on every request, so a
+disabled account takes effect immediately. One secret, `JWT_SIGNING_KEY`
+(≥32 bytes), is required in production. No emulator and no third-party
+identity provider — the whole httpapi suite runs under plain `go test`.
+The `firebase_uid` column is now always NULL and will be dropped in a
+follow-up migration. The Flutter client swap (firebase_auth → the API) is
+the remaining phase; see `firebase-auth-migration.md`.
 
 ```bash
-make emulator         # http://localhost:4000 — Auth on 9099, Storage on 9199
-make run-firebase     # Go server wired to the Auth emulator
+make backend          # wipe+seed, then run on :8765 (dev JWT key, EMAIL_LOG=1)
 ```
-
-Needs Node ≥20 and Java ≥11. See `firebase-auth-migration.md` for the
-plan and `firebase.json` for the config.
 
 ### Static "try it" demo + marketing wrapper
 
@@ -445,8 +441,9 @@ These are deferred deliberately, not bugs:
     endpoint and pops the native save dialog (file_picker.saveFile).
   - `POST /admin/users/{id}/anonymise` scrubs PII on users + role
     profile, sets account_status='disabled', stamps
-    `users.anonymised_at` (migration 0028), and disables the Firebase
-    Auth user. Bookings, charges, payments, audit log — preserved per
+    `users.anonymised_at` (migration 0028), sets `account_status='disabled'`
+    and clears the password hash so the account can't sign in. Bookings,
+    charges, payments, audit log — preserved per
     financial-retention obligations. Self-target refused (400).
     Second call returns 409 already_anonymised. Admin student-detail
     page has a "Danger zone · GDPR" card with confirm dialog.
@@ -456,14 +453,12 @@ These are deferred deliberately, not bugs:
   2026-06-12_: entity chips (existing), date-range presets (All / Today
   / 7d / 30d / 90d + custom range picker), and tap-an-actor-name in
   any row to pivot the timeline to that person (clearable via a chip).
-- **Firebase App Check** — deferred. Would gate every API request on an
+- **App attestation** — deferred. Would gate every API request on an
   attestation token proving the call came from the real Flutter app /
-  trusted browser. Best defence against signup-flood / scripted-API
-  abuse, on top of Firebase Auth's own per-IP throttles. Wiring is ~half
-  a day: register providers per platform in the Firebase console, add
-  `firebase_app_check` to the Flutter app, verify the `X-Firebase-AppCheck`
-  header in `authMiddleware`. Roll out in monitor mode for a week before
-  enforcing.
+  trusted browser. Best defence against signup-flood / scripted-API abuse,
+  on top of the per-IP rate limiter. An attestation provider (e.g. Play
+  Integrity / App Attest, verified in `authMiddleware`) is the shape; roll
+  out in monitor mode for a week before enforcing.
 - **DVLA polling** — automatic MOT + tax expiry refresh via the gov.uk MOT
   history + VES APIs. Manual update flow on the bike-detail sheet covers day
   one; the polling worker is a chunk-4 follow-up in `fleet-features-plan.md`
@@ -503,10 +498,10 @@ These are deferred deliberately, not bugs:
   locally; `docker build` not run here).
 - **Tenancy & provisioning** — _shipped 2026-10-13_. Shared multi-tenant is
   the default (one deployment, schools isolated by `school_id`). `cmd/provision`
-  creates a real school + first owner (+ Firebase user) — the production
+  creates a real school + first owner (with a bcrypt password) — the production
   onboarding path, separate from the demo seed. A customer can get a
-  **dedicated single-tenant instance**: same image, own volume/domain/Firebase
-  project, with `KS_SINGLE_TENANT_SCHOOL_ID=<id>` pinning signup to its one
+  **dedicated single-tenant instance**: same image, own volume/domain,
+  with `KS_SINGLE_TENANT_SCHOOL_ID=<id>` pinning signup to its one
   school. See `deploy/README.md`.
 - **Real user testing** — only API smoke + unit tests + a code-level UI review;
   no human browser click-through yet (demo builds via `make web-demo`).
@@ -517,11 +512,12 @@ These are deferred deliberately, not bugs:
 
 ## Decisions made along the way (don't re-litigate)
 
-- **Auth** — migrated to Firebase Auth 2026-06-08 (the deferred decision
-  finally tripped its trigger: password reset). Backend dual-paths on
-  token shape so the legacy session tokens still validate until
-  `/auth/login` is deleted. See `firebase-auth-migration.md`. Originally:
-  rolled-own (bcrypt + opaque session tokens). See
+- **Auth** — hand-rolled email/password (bcrypt + HS256 JWT access tokens +
+  rotating refresh tokens + emailed single-use password reset). Briefly on
+  Firebase Auth (2026-06-08) for the password-reset trigger, then moved off
+  it entirely on 2026-10-25 to drop the US/Google dependency for a
+  GDPR/EU-sovereignty-leaning deployment. One secret (`JWT_SIGNING_KEY`), no
+  external identity provider. See `firebase-auth-migration.md` and
   `memory/project_auth_decision.md`.
 - **SQLite first, Postgres later** — ANSI-ish SQL, no SQLite-isms. Migration path:
   swap driver + add RLS policies. See `memory/project_stack.md`.

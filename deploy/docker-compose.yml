@@ -4,8 +4,7 @@
 # or Cloud Run with a mounted volume.
 #
 # First run:
-#   cp .env.example .env     # then edit it
-#   mkdir -p secrets         # drop firebase-sa.json here (gitignored)
+#   cp .env.example .env     # then edit it (set JWT_SIGNING_KEY!)
 #   docker compose up -d --build
 #
 # Provision the first school (see README):
@@ -23,12 +22,12 @@ services:
       # CORS allow-list — the web app origin(s). REQUIRED in prod: the API
       # fails closed and rejects unknown origins.
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
-      # Firebase Admin (token verification + provisioning user creation).
-      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}
-      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
-      - FIREBASE_STORAGE_BUCKET=${FIREBASE_STORAGE_BUCKET:-}
-      # Transactional email. SMTP_HOST set → real sending; else EMAIL_LOG=1
-      # → log only; else email queues but isn't sent.
+      # Auth: HS256 signing key for access + refresh tokens. REQUIRED in prod.
+      - JWT_SIGNING_KEY=${JWT_SIGNING_KEY:-}
+      # Base URL for the emailed password-reset link (<WEB_APP_URL>?token=...).
+      - WEB_APP_URL=${WEB_APP_URL:-}
+      # Transactional email (incl. password-reset links). SMTP_HOST set → real
+      # sending; else EMAIL_LOG=1 → log only; else email queues but isn't sent.
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_USERNAME=${SMTP_USERNAME:-}
@@ -42,7 +41,6 @@ services:
       - KS_SINGLE_TENANT_SCHOOL_ID=${KS_SINGLE_TENANT_SCHOOL_ID:-}
     volumes:
       - kickstand-data:/data          # SQLite db + local receipt uploads
-      - ./secrets:/secrets:ro         # mount firebase-sa.json here (read-only)
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8765/healthz"]
       interval: 30s

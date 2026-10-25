@@ -22,8 +22,9 @@ Two docs carry the detail:
 - **Go** backend — `net/http`, `database/sql`, 200+ tests (all green)
 - **SQLite** for development (`modernc.org/sqlite`, pure Go — no CGO); SQL kept
   ANSI-ish for a later **Postgres / Supabase** migration
-- **Firebase Auth** — ID-token verification in the backend, `firebase_auth` in the
-  Flutter client; local dev and tests run against the Firebase Auth emulator
+- **Hand-rolled email/password auth** — bcrypt + HS256 JWT access tokens with
+  rotating refresh tokens, emailed single-use password reset; no third-party
+  identity provider (the backend is the only identity source)
 - **Flutter** client — one codebase, three roles; `go_router` (auth-gate + role
   redirect), Riverpod, Dio, `flutter_secure_storage`
 
@@ -47,23 +48,21 @@ dist/marketing/       static demo-mode build + marketing wrapper
 
 ## Run it
 
-Fastest full-app loop is the Go backend + Flutter Web against the Firebase Auth
-emulator (login needs the demo users to exist on the Firebase side). Three
-terminals, after a one-time `make build && make app-deps`:
+Fastest full-app loop is the Go backend + Flutter Web. Auth is hand-rolled, so
+there's no emulator to run — two terminals, after a one-time
+`make build && make app-deps`:
 
 ```bash
-make emulator        # tab 1 — Firebase Auth + Storage emulators
-make seed-firebase   # once  — seeds SQLite + matching Firebase users
-make run-firebase    # tab 2 — Go server on :8765, wired to the emulator
-make app-run         # tab 3 — Flutter in Chrome (override: make app-run DEVICE=ios)
+make backend   # tab 1 — wipe+seed the demo tenant, then run the server on :8765
+make app-run   # tab 2 — Flutter in Chrome (override: make app-run DEVICE=ios)
 ```
 
-API-only (no Flutter login) is simpler — `make seed && make run`. Point the client
-elsewhere at build time with `--dart-define=KS_API_BASE_URL=https://api.example.com`.
+`make backend` runs the server with a dev `JWT_SIGNING_KEY` and `EMAIL_LOG=1`
+(password-reset links are logged, not emailed). API-only is just
+`make seed && make run`. Point the client elsewhere at build time with
+`--dart-define=KS_API_BASE_URL=https://api.example.com`.
 
-Needs Node ≥20 and Java ≥11 for the emulator. See
-[`firebase-auth-migration.md`](firebase-auth-migration.md) for the auth setup and
-`make help`-worthy targets in the [`Makefile`](Makefile) (`make test`, `make web-demo`,
+See `make`-targets in the [`Makefile`](Makefile) (`make test`, `make web-demo`,
 `make marketing-demo`, …).
 
 ### Seeded credentials
